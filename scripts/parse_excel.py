@@ -7,49 +7,76 @@ from datetime import datetime, timedelta
 excel_file = r"c:\Users\PC\Desktop\계측기폴더\(WP-C)(S06-01)지하수위계-수정(이).xlsx"
 output_js_file = r"c:\Users\PC\Desktop\계측기폴더\src\data\groundwaterData.js"
 
-# 기준 정보 매핑
+# 이미지의 상세 메타데이터 스펙 반영
+# 코드 매핑: W-P-001 -> W-1, W-P-002 -> W-2, 등
 gauge_metadata = {
-    "W-P-001": {"location": "환기구 #11 수직구", "datum": 116.498},
-    "W-P-002": {"location": "환기구 #11 수직구", "datum": 116.271},
-    "W-P-003": {"location": "환기구 #11 수직구", "datum": 116.271},
-    "W-P-004": {"location": "환기구 #11 수직구", "datum": 116.271},
-    "W-P-005": {"location": "환기구 #11 수직구", "datum": 116.271},
-    "W-P-010": {"location": "환기구 #11 수직구", "datum": 116.271}
+    "W-P-001": {
+        "displayName": "W-1",
+        "location": "현장 내부 (본선환기구#15 굴착영향범위)",
+        "installDate": "2026-01-14",
+        "initialMeasureDate": "2026-01-20",
+        "datum": 120.850,
+        "bmInfo": "수준기준점 No.6 EL-120.890m"
+    },
+    "W-P-002": {
+        "displayName": "W-2",
+        "location": "현장 내부 (본선환기구#15 굴착영향범위)",
+        "installDate": "2026-02-10",
+        "initialMeasureDate": "2026-02-15",
+        "datum": 116.271,
+        "bmInfo": "수준기준점 No.2 EL-116.350m"
+    },
+    "W-P-003": {
+        "displayName": "W-3",
+        "location": "현장 내부",
+        "installDate": "2025-02-24",
+        "initialMeasureDate": "2025-03-02",
+        "datum": 116.271,
+        "bmInfo": "수준기준점 No.3 EL-116.310m"
+    },
+    "W-P-004": {
+        "displayName": "W-4",
+        "location": "현장 내부",
+        "installDate": "2025-02-24",
+        "initialMeasureDate": "2025-03-02",
+        "datum": 116.271,
+        "bmInfo": "수준기준점 No.3 EL-116.310m"
+    },
+    "W-P-005": {
+        "displayName": "W-5",
+        "location": "현장 내부",
+        "installDate": "2025-06-09",
+        "initialMeasureDate": "2025-06-15",
+        "datum": 116.271,
+        "bmInfo": "수준기준점 No.4 EL-116.300m"
+    },
+    "W-P-010": {
+        "displayName": "W-10",
+        "location": "현장 내부 (본선환기구#15 굴착영향범위)",
+        "installDate": "2025-07-18",
+        "initialMeasureDate": "2025-07-24",
+        "datum": 116.271,
+        "bmInfo": "수준기준점 No.5 EL-116.290m"
+    }
 }
 
+# 이미지 상의 실제 임계 관리기준 반영 (누적변화량 1.59 / 1.99 / 2.39 m)
 thresholds = {
-    "deltaInit": {"level1": 5.84, "level2": 7.30, "level3": 8.76, "unit": "m"},
+    "deltaInit": {"level1": 1.59, "level2": 1.99, "level3": 2.39, "unit": "m"},
     "rate1D": {"level1": 0.50, "level2": 0.75, "level3": 1.00, "unit": "m/day"}
 }
 
 def parse_gauge_sheet(xl, sheet_name):
-    # 헤더는 7번째 행(인덱스 7)에 걸쳐 있음
+    # 헤더는 7번째 행(skiprows=7) 스킵
     df_raw = xl.parse(sheet_name, skiprows=7)
-    
-    # 컬럼 정의 (A열~M열)
-    # 0: 플랫폼 반영구분 (COMMAND)
-    # 1: 초기치 (INIT)
-    # 2: 측정일자 (DATE)
-    # 3: 경과일수
-    # 4: 기간일수
-    # 5: Unnamed (비어있음)
-    # 6: 관상단(E.L) (A)
-    # 7: 측정치(E.L) (B)
-    # 8: 측정치(G.L) (V)
-    # 9: 전회변화량
-    # 10: 누적변화량
-    # 11: 일간변위
-    # 12: 굴착고 (X)
     
     data_list = []
     
     for idx, row in df_raw.iterrows():
-        # 측정일자가 null이면 데이터가 끝난 것으로 판단
         date_val = row.iloc[2]
         if pd.isna(date_val):
             continue
             
-        # 날짜 포맷 변환
         if isinstance(date_val, datetime):
             date_str = date_val.strftime("%Y-%m-%d")
         else:
@@ -58,33 +85,42 @@ def parse_gauge_sheet(xl, sheet_name):
             except:
                 continue
         
-        # 굴착고와 누적변화량 등 주요 값 추출 (float 처리 및 안전장치)
         try:
-            # 굴착고 (X): 엑셀에 음수(예: -3)로 표기되어 있다면 차트상 깊이 표현을 위해 절댓값으로 양수 변환
+            # 굴착고 (X) - 음수값 그대로 파싱
             raw_depth = row.iloc[12]
-            excavation_depth = abs(float(raw_depth)) if not pd.isna(raw_depth) else 0.0
+            excavation_depth = float(raw_depth) if not pd.isna(raw_depth) else 0.0
             
-            # 누적변화량: 초기치 대비 하강량이므로 차트에 양수 트렌드로 표현하기 위해 절댓값 처리
+            # 누적변화량 (Col 10) - 음수값 그대로 파싱 (예: -0.20)
             raw_delta = row.iloc[10]
-            actual_delta = abs(float(raw_delta)) if not pd.isna(raw_delta) else 0.0
+            actual_delta = float(raw_delta) if not pd.isna(raw_delta) else 0.0
             
-            # 측정치(E.L) - 실제 지하수위
+            # 측정치(E.L) (Col 7) - 지하수위 절대 표고
             raw_wl = row.iloc[7]
             actual_wl = float(raw_wl) if not pd.isna(raw_wl) else 0.0
             
-            # 일간 변위 (m/day)
+            # 측정치(G.L) (Col 8)
+            raw_gl = row.iloc[8]
+            actual_gl = float(raw_gl) if not pd.isna(raw_gl) else 0.0
+            
+            # 관상단(E.L) (Col 6)
+            raw_pipe = row.iloc[6]
+            pipe_top = float(raw_pipe) if not pd.isna(raw_pipe) else 0.0
+
+            # 일간 변위 (Col 11) - 일간 변화량이므로 양수/음수 속도 유지
             raw_rate = row.iloc[11]
-            actual_rate = abs(float(raw_rate)) if not pd.isna(raw_rate) else 0.0
+            actual_rate = float(raw_rate) if not pd.isna(raw_rate) else 0.0
         except Exception as e:
             continue
             
         data_list.append({
             "date": date_str,
             "isForecast": False,
-            "excavationDepth": round(excavation_depth, 3),
-            "actualDelta": round(actual_delta, 3),
+            "pipeTop": round(pipe_top, 3),
             "actualWaterLevel": round(actual_wl, 3),
+            "actualGL": round(actual_gl, 3),
+            "actualDelta": round(actual_delta, 3),
             "actualRate": round(actual_rate, 3),
+            "excavationDepth": round(excavation_depth, 3),
             "arimaDelta": None,
             "lstmDelta": None,
             "transformerDelta": None,
@@ -99,84 +135,88 @@ def generate_forecast(data_list, gauge_id):
     if not data_list:
         return []
         
-    # 마지막 데이터 기준정보
     last_item = data_list[-1]
     last_date = datetime.strptime(last_item["date"], "%Y-%m-%d")
-    last_delta = last_item["actualDelta"]
-    last_depth = last_item["excavationDepth"]
+    last_delta = last_item["actualDelta"] # 음수 (예: -0.34)
+    last_depth = last_item["excavationDepth"] # 음수 (예: -4)
     last_wl = last_item["actualWaterLevel"]
-    
-    # 수위계의 기준표고
-    datum = gauge_metadata[gauge_id]["datum"]
+    last_gl = last_item["actualGL"]
+    pipe_top = last_item["pipeTop"]
     
     forecast_data = []
     
-    # 모델별 변동 패턴 설정 (시뮬레이션 가중치)
-    # ARIMA: 과거 선형적 추세 연장 (기울기 계산)
+    # 누적변화량의 과거 감하 속도 모사 (음수로 더 떨어짐)
     if len(data_list) > 5:
         recent_deltas = [item["actualDelta"] for item in data_list[-5:]]
         slope = (recent_deltas[-1] - recent_deltas[0]) / 5.0
-        if slope < 0: slope = 0.05 # 하강 추세 기본값 보장
+        if slope > 0: slope = -0.05 # 아래로 하강하는 경향 확보
     else:
-        slope = 0.1
+        slope = -0.05
         
     for i in range(1, 6):
         forecast_date = (last_date + timedelta(days=i)).strftime("%Y-%m-%d")
         
-        # 굴착 깊이가 일 평균 0.6m씩 증가하는 시나리오
-        forecast_depth = last_depth + (i * 0.6)
+        # 굴착 깊이가 아래로 점진적으로 깊어짐 (-0.5m씩 하강)
+        forecast_depth = last_depth - (i * 0.5)
         
-        # 1. ARIMA 예측 (안정적, 과거 추세 선형 반영 + 약간의 감쇄)
-        arima_delta = last_delta + (i * slope * 0.9)
+        # 1. ARIMA 예측 (과거 하강 추세 그대로 음수로 가중 연장)
+        arima_delta = last_delta + (i * slope * 0.8)
         
-        # 2. LSTM 예측 (비선형 굴착고 영향 반영, 후반부 하강 가속)
-        # 굴착 깊이가 깊어질수록 수위 저하(변위량 증가)폭을 더 키움
-        lstm_factor = 1.0 + (forecast_depth * 0.015)
+        # 2. LSTM 예측 (굴착고 하강에 연동하여 지하수위 하강폭 증가)
+        lstm_factor = 1.0 + (abs(forecast_depth) * 0.02)
         lstm_delta = last_delta + (i * slope * lstm_factor)
         
-        # 3. Transformer 예측 (돌발 드롭 시나리오 모사)
-        # 3~4일차에 굴착고가 급격해지는 영향으로 지하수위가 크게 떨어지는 돌발 하강 패턴 연출
+        # 3. Transformer 예측 (돌발 급격 강하 시나리오)
         if i >= 3:
-            tf_delta = last_delta + (i * slope * 1.3) + 0.4
+            tf_delta = last_delta + (i * slope * 1.4) - 0.3 # 음수 아래로 드롭 추가
         else:
             tf_delta = last_delta + (i * slope * 1.1)
             
-        # 임계 경보 테스트 시뮬레이션을 위해 일부 수위계는 임계치를 돌파하도록 설정
-        # 3차 위험선이 8.76m 이므로 특정 ID(예: W-P-001, W-P-010)는 예측 기간 중 경보를 울리도록 유도
+        # 데모 시연 상 3차 임계치(2.39m)를 돌파하도록 일부 특정 수위계 유도
+        # 예: W-P-001(W-1)은 3차 임계치인 -2.39m 아래로 뚫고 하강하도록 설정
         if gauge_id in ["W-P-001", "W-P-010"]:
-            arima_delta += i * 0.3
-            lstm_delta += i * 0.5
-            transformer_delta = tf_delta + (i * 0.7)
+            arima_delta -= i * 0.2
+            lstm_delta -= i * 0.3
+            transformer_delta = tf_delta - (i * 0.4)
         else:
             transformer_delta = tf_delta
 
-        # 일간변위(RATE_1D) 예측치 계산 (이전 예측치 대비 차이)
+        # 일간변위(RATE_1D) 예측치 계산
         prev_arima_delta = forecast_data[-1]["arimaDelta"] if i > 1 else last_delta
         prev_lstm_delta = forecast_data[-1]["lstmDelta"] if i > 1 else last_delta
         prev_tf_delta = forecast_data[-1]["transformerDelta"] if i > 1 else last_delta
         
-        arima_rate = abs(arima_delta - prev_arima_delta)
-        lstm_rate = abs(lstm_delta - prev_lstm_delta)
-        tf_rate = abs(transformer_delta - prev_tf_delta)
+        arima_rate = arima_delta - prev_arima_delta
+        lstm_rate = lstm_delta - prev_lstm_delta
+        tf_rate = transformer_delta - prev_tf_delta
         
-        # 실제 지하수위(EL) 예측 계산 (기준표고 - 누적변위량)
-        arima_wl = datum - arima_delta
-        lstm_wl = datum - lstm_delta
-        tf_wl = datum - transformer_delta
+        # 실제 지하수위(EL) 및 G.L 측정치 예측 계산
+        arima_wl = last_wl + (arima_delta - last_delta)
+        lstm_wl = last_wl + (lstm_delta - last_delta)
+        tf_wl = last_wl + (transformer_delta - last_delta)
+        
+        arima_gl = last_gl + (arima_delta - last_delta)
+        lstm_gl = last_gl + (lstm_delta - last_delta)
+        tf_gl = last_gl + (transformer_delta - last_delta)
         
         forecast_data.append({
             "date": forecast_date,
             "isForecast": True,
-            "excavationDepth": round(forecast_depth, 3),
-            "actualDelta": None,
+            "pipeTop": round(pipe_top, 3),
             "actualWaterLevel": None,
+            "actualGL": None,
+            "actualDelta": None,
             "actualRate": None,
+            "excavationDepth": round(forecast_depth, 3),
             "arimaDelta": round(arima_delta, 3),
             "lstmDelta": round(lstm_delta, 3),
             "transformerDelta": round(transformer_delta, 3),
             "arimaRate": round(arima_rate, 3),
             "lstmRate": round(lstm_rate, 3),
-            "transformerRate": round(tf_rate, 3)
+            "transformerRate": round(tf_rate, 3),
+            "arimaWaterLevel": round(arima_wl, 3),
+            "lstmWaterLevel": round(lstm_wl, 3),
+            "transformerWaterLevel": round(tf_wl, 3)
         })
         
     return forecast_data
@@ -195,23 +235,26 @@ def main():
         "instruments": {}
     }
     
-    # 각 수위계 시트 파싱 및 병합
     for sheet in xl.sheet_names:
         if sheet in gauge_metadata:
+            meta = gauge_metadata[sheet]
             print(f"Parsing sheet: {sheet}")
             actual_data = parse_gauge_sheet(xl, sheet)
             forecast_data = generate_forecast(actual_data, sheet)
             
             output_data["instruments"][sheet] = {
                 "code": sheet,
-                "location": gauge_metadata[sheet]["location"],
-                "datumLevel": gauge_metadata[sheet]["datum"],
+                "displayName": meta["displayName"],
+                "location": meta["location"],
+                "installDate": meta["installDate"],
+                "initialMeasureDate": meta["initialMeasureDate"],
+                "datumLevel": meta["datum"],
+                "bmInfo": meta["bmInfo"],
                 "thresholds": thresholds,
                 "data": actual_data + forecast_data
             }
-            print(f"  -> Successfully processed {len(actual_data)} actual rows and {len(forecast_data)} forecast rows.")
+            print(f"  -> Processed {len(actual_data)} rows and {len(forecast_data)} forecast rows for {meta['displayName']}.")
             
-    # JavaScript 파일로 쓰기 (React에서 import 하기 편하도록 export default 구성)
     os.makedirs(os.path.dirname(output_js_file), exist_ok=True)
     with open(output_js_file, "w", encoding="utf-8") as f:
         f.write("/* eslint-disable */\n")

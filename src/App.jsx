@@ -6,139 +6,225 @@ import {
 } from 'recharts';
 import { 
   Activity, AlertTriangle, CheckCircle, Database, HelpCircle, 
-  Info, TrendingDown, ShieldAlert, Cpu, Layers, Calendar, ArrowRight, Gauge
+  Info, TrendingDown, ShieldAlert, Cpu, Layers, Calendar, ArrowRight, 
+  Gauge, Sun, Moon, CloudRain, Sliders, ChevronDown, Download, ChevronLeft, ChevronRight, RefreshCw
 } from 'lucide-react';
 
 function App() {
   const { projectInfo, instruments } = groundwaterData;
   const instrumentIds = Object.keys(instruments);
   
-  // W-P-001을 기본 선택으로 지정
+  // 상태 관리
   const [selectedId, setSelectedId] = useState(instrumentIds[0] || 'W-P-001');
-  const currentInstrument = instruments[selectedId];
-  const chartData = currentInstrument.data;
+  const [filterPeriod, setFilterPeriod] = useState('3'); // '3'개월, '6'개월, 'all'전체
+  const [weatherImpact, setWeatherImpact] = useState(false); // 강수 데이터 연동 여부
+  const [noiseFilter, setNoiseFilter] = useState(false); // 노이즈 필터링 여부
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 12;
 
-  // 실시간 수위 및 예측 위험도 진단
+  const currentInstrument = instruments[selectedId];
+  const rawData = currentInstrument.data;
+
+  // 1. 강수량 시뮬레이션 및 이동평균(노이즈 필터) 연산된 데이터 생성
+  const processedData = useMemo(() => {
+    return rawData.map((d, index, arr) => {
+      // 5일 이동 평균 (누적변화량) 필터링
+      let filteredDelta = d.actualDelta;
+      if (noiseFilter && !d.isForecast) {
+        const start = Math.max(0, index - 4);
+        const window = arr.slice(start, index + 1).filter(item => !item.isForecast);
+        const sum = window.reduce((acc, item) => acc + item.actualDelta, 0);
+        filteredDelta = window.length > 0 ? sum / window.length : d.actualDelta;
+      }
+
+      // 기상청 강수 데이터 모사 (시뮬레이션)
+      // 여름철인 5월, 6월, 7월 경에 강수 집중 배치
+      let precipitation = 0;
+      const dateObj = new Date(d.date);
+      const month = dateObj.getMonth() + 1;
+      const day = dateObj.getDate();
+      
+      // 장마철 강우 이벤트 모사
+      if (month === 5 && (day === 15 || day === 16)) {
+        precipitation = day === 15 ? 45.5 : 30.2;
+      } else if (month === 6 && (day === 25 || day === 26 || day === 27)) {
+        precipitation = day === 25 ? 65.0 : (day === 26 ? 85.4 : 20.1);
+      } else if (month === 7 && day === 5) {
+        precipitation = 52.0;
+      } else if (Math.random() > 0.92) {
+        // 평시 산발적 소량 강우
+        precipitation = Math.round(Math.random() * 15 * 10) / 10;
+      }
+
+      return {
+        ...d,
+        filteredDelta: filteredDelta !== null ? round(filteredDelta, 3) : null,
+        precipitation: weatherImpact ? precipitation : 0
+      };
+    });
+  }, [rawData, weatherImpact, noiseFilter]);
+
+  // 2. 기간별 필터링 적용
+  const filteredData = useMemo(() => {
+    if (filterPeriod === 'all') return processedData;
+    
+    const monthsToSubtract = parseInt(filterPeriod);
+    const lastDateStr = processedData[processedData.length - 1].date;
+    const lastDate = new Date(lastDateStr);
+    
+    const cutoffDate = new Date(lastDate);
+    cutoffDate.setMonth(cutoffDate.getMonth() - monthsToSubtract);
+    
+    return processedData.filter(d => new Date(d.date) >= cutoffDate);
+  }, [processedData, filterPeriod]);
+
+  // 3. 실시간 안전 등급 진단 로직 (음수 수치에 매핑)
   const safetyStatus = useMemo(() => {
-    // 실제 데이터의 마지막 행 추출
-    const actualRows = chartData.filter(d => !d.isForecast);
+    const actualRows = processedData.filter(d => !d.isForecast);
     const lastActual = actualRows[actualRows.length - 1] || {};
     
-    // 예측 데이터 추출
-    const forecastRows = chartData.filter(d => d.isForecast);
+    const forecastRows = processedData.filter(d => d.isForecast);
     const lastForecast = forecastRows[forecastRows.length - 1] || {};
 
-    const maxActualDelta = Math.max(...actualRows.map(d => d.actualDelta || 0));
-    const maxForecastDelta = Math.max(
-      ...forecastRows.map(d => Math.max(d.arimaDelta || 0, d.lstmDelta || 0, d.transformerDelta || 0))
+    // 엑셀은 누적변화량이 음수로 떨어지므로 최저치(절대값 기준 최대치)를 확인
+    const minActualDelta = Math.min(...actualRows.map(d => d.actualDelta || 0));
+    const minForecastDelta = Math.min(
+      ...forecastRows.map(d => Math.min(d.arimaDelta || 0, d.lstmDelta || 0, d.transformerDelta || 0))
     );
     
-    const peakDelta = Math.max(maxActualDelta, maxForecastDelta);
+    // 가장 하강폭이 큰 값 (즉, 가장 작은 음수값)
+    const peakDelta = Math.min(minActualDelta, minForecastDelta);
+    const absPeakDelta = Math.abs(peakDelta);
     
-    // 임계값 매핑 (5.84m, 7.30m, 8.76m)
+    // 임계값 매핑 (1.59m, 1.99m, 2.39m)
     const lv1 = currentInstrument.thresholds.deltaInit.level1;
     const lv2 = currentInstrument.thresholds.deltaInit.level2;
     const lv3 = currentInstrument.thresholds.deltaInit.level3;
     
     let level = '안전';
-    let colorClass = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
-    let bgIcon = <CheckCircle className="w-8 h-8 text-emerald-400 animate-pulse" />;
-    let desc = '모든 지하수위 변동 및 예측치가 관리 기준치 이내로 안전하게 유지되고 있습니다.';
+    let colorClass = 'text-emerald-600 bg-emerald-50 border-emerald-200';
+    let alertColor = 'bg-emerald-500';
+    let bgIcon = <CheckCircle className="w-8 h-8 text-emerald-500" />;
+    let desc = '모든 지하수위 변동 및 예측치가 관리 기준치 이내로 매우 안정적인 추세를 유지하고 있습니다.';
     
-    if (peakDelta >= lv3) {
-      level = '경계 (위험)';
-      colorClass = 'text-rose-400 bg-rose-500/10 border-rose-500/20';
-      bgIcon = <ShieldAlert className="w-8 h-8 text-rose-400 animate-bounce" />;
-      desc = `[경고] 미래 5일 이내에 AI 예측 수위 변위량이 3차 관리 기준치(${lv3}m)를 초과하여, 지반 변형 및 붕괴 위험성이 고조됩니다. 즉각 차수 보강 대책을 강구하십시오.`;
-    } else if (peakDelta >= lv2) {
-      level = '주의';
-      colorClass = 'text-amber-400 bg-amber-500/10 border-amber-500/20';
-      bgIcon = <AlertTriangle className="w-8 h-8 text-amber-400" />;
-      desc = `[알림] 누적 수위 변위량이 2차 관리 기준치(${lv2}m) 이상으로 상승 중입니다. 현장 모니터링 주기를 단축하고 유출수 점검을 수행하십시오.`;
-    } else if (peakDelta >= lv1) {
-      level = '관심';
-      colorClass = 'text-yellow-300 bg-yellow-500/10 border-yellow-500/20';
-      bgIcon = <Info className="w-8 h-8 text-yellow-300" />;
-      desc = `[정보] 1차 관리 기준치(${lv1}m)를 미세하게 초과했거나 근접했습니다. 추가 변동 추이를 관찰하십시오.`;
+    if (absPeakDelta >= lv3) {
+      level = '경계 (3차 초과)';
+      colorClass = 'text-red-700 bg-red-50 border-red-200';
+      alertColor = 'bg-red-500';
+      bgIcon = <ShieldAlert className="w-8 h-8 text-red-600 animate-pulse" />;
+      desc = `[경고] 미래 5일 이내에 AI 예측 수위 변위량(${absPeakDelta.toFixed(2)}m)이 3차 관리 기준치(${lv3}m)를 초과할 가능성이 매우 높습니다. 굴착 하부 차수 보강공사 검토가 즉시 요구됩니다.`;
+    } else if (absPeakDelta >= lv2) {
+      level = '주의 (2차 초과)';
+      colorClass = 'text-orange-700 bg-orange-50 border-orange-200';
+      alertColor = 'bg-orange-500';
+      bgIcon = <AlertTriangle className="w-8 h-8 text-orange-500" />;
+      desc = `[알림] 누적 수위 변위량이 2차 관리 기준치(${lv2}m) 이상으로 내려앉고 있습니다. 공사 구역 배수 펌프 및 인접 지하 구조물의 연약 지반 침하 여부를 검사하십시오.`;
+    } else if (absPeakDelta >= lv1) {
+      level = '관심 (1차 초과)';
+      colorClass = 'text-yellow-700 bg-yellow-50 border-yellow-200';
+      alertColor = 'bg-yellow-500';
+      bgIcon = <Info className="w-8 h-8 text-yellow-600" />;
+      desc = `[정보] 누적 변화량이 1차 관리 기준치(${lv1}m)를 침범했습니다. 일간 변화율 속도를 점검해 하강 속도가 가속화되는지 예의주시 하시기 바랍니다.`;
     }
     
     return {
       level,
       colorClass,
+      alertColor,
       bgIcon,
       desc,
       lastActualDelta: lastActual.actualDelta || 0,
       lastDepth: lastActual.excavationDepth || 0,
       lastWL: lastActual.actualWaterLevel || 0,
+      lastGL: lastActual.actualGL || 0,
+      lastRate: lastActual.actualRate || 0,
       lastDate: lastActual.date || '',
-      forecastStartIdx: actualRows.length,
+      pipeTop: lastActual.pipeTop || 0,
       forecastStartDate: forecastRows[0]?.date || ''
     };
-  }, [chartData, currentInstrument]);
+  }, [processedData, currentInstrument]);
 
-  // 차트 툴팁 커스터마이징
-  const CustomTooltip = ({ active, payload }) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload;
-      return (
-        <div className="p-4 rounded-xl border border-white/10 glass-panel text-xs space-y-2">
-          <p className="font-bold text-gray-300 flex items-center gap-1.5">
-            <Calendar className="w-3.5 h-3.5" />
-            {data.date} {data.isForecast && <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">AI 예측</span>}
-          </p>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-            <span className="text-gray-400">굴착 깊이 (G.L):</span>
-            <span className="font-semibold text-sky-400 text-right">{data.excavationDepth} m</span>
-            
-            {!data.isForecast ? (
-              <>
-                <span className="text-gray-400">실제 누적 변위량:</span>
-                <span className="font-semibold text-emerald-400 text-right">{data.actualDelta} m</span>
-                <span className="text-gray-400">실제 지하수위 (E.L):</span>
-                <span className="font-semibold text-teal-400 text-right">{data.actualWaterLevel} m</span>
-              </>
-            ) : (
-              <>
-                <span className="text-gray-400">ARIMA 예측 변위:</span>
-                <span className="font-semibold text-orange-400 text-right">{data.arimaDelta} m</span>
-                <span className="text-gray-400">LSTM 예측 변위:</span>
-                <span className="font-semibold text-purple-400 text-right">{data.lstmDelta} m</span>
-                <span className="text-gray-400">Transformer 예측:</span>
-                <span className="font-semibold text-pink-400 text-right">{data.transformerDelta} m</span>
-              </>
-            )}
-          </div>
-        </div>
-      );
+  // 4. 테이블 페이징 처리 (실계측 데이터만 표시하도록 구성)
+  const tableData = useMemo(() => {
+    return processedData.filter(d => !d.isForecast).reverse(); // 최신순 정렬
+  }, [processedData]);
+
+  const totalPages = Math.ceil(tableData.length / itemsPerPage);
+  const paginatedTableData = useMemo(() => {
+    const startIdx = (currentPage - 1) * itemsPerPage;
+    return tableData.slice(startIdx, startIdx + itemsPerPage);
+  }, [tableData, currentPage]);
+
+  const handlePageChange = (page) => {
+    if (page >= 1 && page <= totalPages) {
+      setCurrentPage(page);
     }
-    return null;
   };
 
+  const handleDownload = () => {
+    // CSV 가상 다운로드 알림
+    alert(`${currentInstrument.displayName} 계측 데이터의 CSV 다운로드가 완료되었습니다.\n파일명: ${projectInfo.siteCode}_${currentInstrument.displayName}_data.csv`);
+  };
+
+  // 소수점 헬퍼 함수
+  function round(val, precision) {
+    return Math.round(val * Math.pow(10, precision)) / Math.pow(10, precision);
+  }
+
   return (
-    <div className="min-h-screen bg-[#0b0f19] text-gray-100 flex flex-col">
-      {/* 1. 상단 관제실 정보 헤더 */}
-      <header className="border-b border-white/5 bg-[#0f1424] px-6 py-4">
+    <div className="min-h-screen bg-gray-50 text-gray-800 flex flex-col font-sans">
+      
+      {/* 1. 상단 관제실 밝은 테마 헤더 */}
+      <header className="border-b border-gray-200 bg-white px-6 py-4 shadow-sm">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-lg bg-indigo-600/10 border border-indigo-500/20">
-              <Gauge className="w-6 h-6 text-indigo-400" />
+            <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-100 shadow-inner">
+              <Gauge className="w-6 h-6 text-blue-600" />
             </div>
             <div>
-              <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
-                AI 모니터링 시스템
-              </span>
-              <h1 className="text-xl font-extrabold text-white tracking-tight flex items-center gap-2 mt-0.5">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded border border-blue-200/50">
+                  지하수위 AI 예측 및 계측관제
+                </span>
+                <span className="text-[10px] font-semibold text-gray-500 bg-gray-100 px-2 py-0.5 rounded border border-gray-200">
+                  VITE-REACT 기반 시연 시스템
+                </span>
+              </div>
+              <h1 className="text-xl font-extrabold text-gray-900 tracking-tight flex items-center gap-2 mt-0.5">
                 {projectInfo.projectName}
-                <span className="text-xs font-normal text-gray-400">관리지점: {projectInfo.siteCode}</span>
+                <span className="text-xs font-normal text-gray-500">지점코드: {projectInfo.siteCode}</span>
               </h1>
             </div>
           </div>
-          <div className="flex items-center gap-3 text-xs bg-black/20 px-4 py-2.5 rounded-xl border border-white/5">
-            <span className="flex h-2 w-2 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            <span className="text-gray-400">실시간 관제 서버 정상 구동 중</span>
+          
+          <div className="flex items-center gap-3">
+            {/* 고도화 토글 제어 영역 */}
+            <div className="flex items-center gap-2 text-xs bg-gray-100 p-1 rounded-xl border border-gray-200">
+              <button 
+                onClick={() => setWeatherImpact(!weatherImpact)}
+                className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-all ${
+                  weatherImpact 
+                    ? 'bg-blue-600 text-white shadow-sm' 
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+                title="기상청 강수 데이터를 연동하여 지하수위 상승 복구 효과 시뮬레이션"
+              >
+                <CloudRain className="w-3.5 h-3.5" />
+                기상 데이터 연동 {weatherImpact ? 'ON' : 'OFF'}
+              </button>
+              <button 
+                onClick={() => setNoiseFilter(!noiseFilter)}
+                className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-all ${
+                  noiseFilter 
+                    ? 'bg-blue-600 text-white shadow-sm' 
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+                title="이동평균 기법을 활용해 수계 노이즈를 스무딩 처리합니다."
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                노이즈 필터 {noiseFilter ? 'ON' : 'OFF'}
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -146,327 +232,622 @@ function App() {
       {/* 2. 대시보드 콘텐츠 영역 */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6">
         
-        {/* 상단 탭 셀렉터 */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-white/5">
-          <span className="text-xs font-bold text-gray-400 uppercase tracking-wider px-2 shrink-0">지하수위계 목록 :</span>
+        {/* 상단 탭 셀렉터 - W-1 ~ W-10 */}
+        <div className="bg-white p-2 rounded-2xl border border-gray-200 shadow-sm flex items-center gap-2 overflow-x-auto">
+          <span className="text-xs font-bold text-gray-500 uppercase tracking-wider px-3 shrink-0">계측기 관측공 전환:</span>
           {instrumentIds.map((id) => (
             <button
               key={id}
-              onClick={() => setSelectedId(id)}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border shrink-0 ${
+              onClick={() => {
+                setSelectedId(id);
+                setCurrentPage(1); // 관측공 이동시 페이지 초기화
+              }}
+              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all border shrink-0 ${
                 selectedId === id
-                  ? 'bg-indigo-600 text-white border-indigo-500 shadow-lg shadow-indigo-600/20'
-                  : 'bg-[#12182b] text-gray-400 border-white/5 hover:bg-[#1a223d] hover:text-white'
+                  ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-500/20'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:text-gray-900'
               }`}
             >
-              {id}
+              {instruments[id].displayName} (계측기)
             </button>
           ))}
         </div>
 
-        {/* 3. 요약 지표 카드 및 위험 분석 */}
-        <section className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/* 주요 지표 1: 누적 변위량 */}
-          <div className="glass-panel p-5 rounded-2xl flex flex-col justify-between">
-            <div className="flex justify-between items-start">
-              <p className="text-xs font-semibold text-gray-400">최종 누적 변위량</p>
-              <span className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 text-xs">
-                <TrendingDown className="w-4 h-4" />
-              </span>
-            </div>
-            <div className="mt-4">
-              <h3 className="text-3xl font-black text-white">{safetyStatus.lastActualDelta} <span className="text-sm font-medium text-gray-400">m</span></h3>
-              <p className="text-[10px] text-gray-500 mt-1 flex items-center gap-1">
-                최종 계측일: {safetyStatus.lastDate}
-              </p>
-            </div>
+        {/* 3. 설치 및 계측 정보 섹션 (밝은 테마 테이블 및 수준기준점) */}
+        <section className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 space-y-6">
+          <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+            <span className="w-1.5 h-4 bg-blue-600 rounded-full"></span>
+            <h2 className="text-lg font-black text-gray-900">{currentInstrument.displayName} 설치 및 계측 정보</h2>
           </div>
 
-          {/* 주요 지표 2: 현재 지하수위(EL) */}
-          <div className="glass-panel p-5 rounded-2xl flex flex-col justify-between">
-            <div className="flex justify-between items-start">
-              <p className="text-xs font-semibold text-gray-400">최종 지하수위 (E.L)</p>
-              <span className="p-1.5 rounded-lg bg-teal-500/10 text-teal-400 text-xs">
-                <Database className="w-4 h-4" />
-              </span>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* 왼쪽: 기본 속성 카드 */}
+            <div className="bg-slate-50 border border-slate-200/60 rounded-2xl p-5 space-y-4">
+              <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase">기본 설비 속성</h3>
+              <div className="grid grid-cols-2 gap-y-3 text-xs">
+                <span className="text-gray-500">계측기 코드</span>
+                <span className="font-bold text-gray-900 text-right">{currentInstrument.displayName}</span>
+                
+                <span className="text-gray-500">계측기명</span>
+                <span className="font-bold text-gray-900 text-right">지하수위계 (WL)</span>
+                
+                <span className="text-gray-500">설치일자</span>
+                <span className="font-medium text-gray-900 text-right">{currentInstrument.installDate}</span>
+                
+                <span className="text-gray-500">초기치 측정일</span>
+                <span className="font-medium text-gray-900 text-right">{currentInstrument.initialMeasureDate}</span>
+                
+                <span className="text-gray-500">설치위치</span>
+                <span className="font-medium text-gray-900 text-right">{currentInstrument.location.split(' ')[0]}</span>
+              </div>
+              <div className="border-t border-slate-200/80 pt-3">
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  ⓘ 본선환기구#15 굴착영향범위 내 상시 모니터링 수계 대상
+                </p>
+              </div>
             </div>
-            <div className="mt-4">
-              <h3 className="text-3xl font-black text-white">{safetyStatus.lastWL} <span className="text-sm font-medium text-gray-400">EL.m</span></h3>
-              <p className="text-[10px] text-gray-500 mt-1">
-                기준표고 (GL): {currentInstrument.datumLevel} m
-              </p>
+
+            {/* 중간: 안전관리기준 임계치 */}
+            <div className="bg-slate-50 border border-slate-200/60 rounded-2xl p-5 flex flex-col justify-between">
+              <div>
+                <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase mb-3">안전 관리 기준</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-[10px] text-gray-500">
+                        <th className="pb-2 font-medium">관리 지표</th>
+                        <th className="pb-2 font-semibold text-center text-yellow-600 bg-yellow-500/5 px-2">1차 (관심)</th>
+                        <th className="pb-2 font-semibold text-center text-orange-600 bg-orange-500/5 px-2">2차 (주의)</th>
+                        <th className="pb-2 font-semibold text-center text-red-600 bg-red-500/5 px-2">3차 (경계)</th>
+                        <th className="pb-2 text-right">단위</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-medium">
+                      <tr>
+                        <td className="py-2.5 text-gray-700">누적변화량</td>
+                        <td className="text-center text-yellow-700 bg-yellow-500/5 px-2">{currentInstrument.thresholds.deltaInit.level1}</td>
+                        <td className="text-center text-orange-700 bg-orange-500/5 px-2">{currentInstrument.thresholds.deltaInit.level2}</td>
+                        <td className="text-center text-red-700 bg-red-500/5 px-2">{currentInstrument.thresholds.deltaInit.level3}</td>
+                        <td className="text-right text-gray-500">m</td>
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 text-gray-700">일간변위</td>
+                        <td className="text-center text-yellow-700 bg-yellow-500/5 px-2">{currentInstrument.thresholds.rate1D.level1}</td>
+                        <td className="text-center text-orange-700 bg-orange-500/5 px-2">{currentInstrument.thresholds.rate1D.level2}</td>
+                        <td className="text-center text-red-700 bg-red-500/5 px-2">{currentInstrument.thresholds.rate1D.level3}</td>
+                        <td className="text-right text-gray-500">m/d</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
+
+            {/* 오른쪽: BM 참고 정보 및 실시간 안전 진단 */}
+            <div className="bg-slate-50 border border-slate-200/60 rounded-2xl p-5 flex flex-col justify-between">
+              <div className="space-y-3">
+                <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase">참고 사항 및 수직 기준</h3>
+                <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-1.5">
+                  <p className="text-xs font-bold text-gray-900 flex items-center gap-1.5">
+                    <span className="w-2 h-2 bg-blue-600 rounded-full"></span>
+                    수준기준점 (Bench Mark)
+                  </p>
+                  <p className="text-xs font-semibold text-blue-700 pl-3.5">
+                    {currentInstrument.bmInfo}
+                  </p>
+                  <p className="text-[10px] text-gray-500 pl-3.5 leading-relaxed">
+                    관상단 수평 계측고 결정을 위해 지정된 주변 수준점 절대 EL 수치 정보입니다.
+                  </p>
+                </div>
+              </div>
+
+              {/* 하단 진단 바 */}
+              <div className={`mt-4 p-3.5 rounded-xl border flex items-center gap-3 ${safetyStatus.colorClass}`}>
+                <div className="shrink-0">{safetyStatus.bgIcon}</div>
+                <div>
+                  <span className="text-[9px] font-bold uppercase tracking-wider opacity-60">안전 등급 진단 결과</span>
+                  <h4 className="text-sm font-black leading-tight mt-0.5">{safetyStatus.level}</h4>
+                </div>
+              </div>
+            </div>
+
           </div>
 
-          {/* 주요 지표 3: 최종 굴착 깊이 */}
-          <div className="glass-panel p-5 rounded-2xl flex flex-col justify-between">
-            <div className="flex justify-between items-start">
-              <p className="text-xs font-semibold text-gray-400">현장 굴착 깊이 (G.L)</p>
-              <span className="p-1.5 rounded-lg bg-sky-500/10 text-sky-400 text-xs">
-                <Layers className="w-4 h-4" />
-              </span>
+          {/* 이상 경보 문구 상단 표출 */}
+          {safetyStatus.level !== '안전' && (
+            <div className="p-4 rounded-xl bg-red-50 border border-red-100 flex items-center gap-3 text-xs leading-relaxed text-red-800">
+              <AlertTriangle className="w-5 h-5 shrink-0 text-red-600" />
+              <p className="font-semibold">{safetyStatus.desc}</p>
             </div>
-            <div className="mt-4">
-              <h3 className="text-3xl font-black text-white">{safetyStatus.lastDepth} <span className="text-sm font-medium text-gray-400">m</span></h3>
-              <p className="text-[10px] text-gray-500 mt-1">
-                설치위치: {currentInstrument.location}
-              </p>
-            </div>
-          </div>
-
-          {/* 주요 지표 4: 안전 관리 경보 알림 카드 */}
-          <div className={`border p-5 rounded-2xl flex items-start gap-4 col-span-1 lg:col-span-1 ${safetyStatus.colorClass}`}>
-            <div className="shrink-0 mt-1">{safetyStatus.bgIcon}</div>
-            <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider opacity-60">안전 등급 진단</span>
-              <h4 className="text-lg font-black mt-0.5">{safetyStatus.level}</h4>
-              <p className="text-[10px] leading-relaxed mt-1 opacity-80">{safetyStatus.level === '안전' ? safetyStatus.desc : '예측 구간 임계초과 주의가 요구됩니다.'}</p>
-            </div>
-          </div>
+          )}
         </section>
 
-        {/* 4. 실시간 위험 침범 가이드 문구 배너 */}
-        {safetyStatus.level !== '안전' && (
-          <div className={`p-4 rounded-xl border flex items-center gap-3 text-xs leading-relaxed ${safetyStatus.colorClass}`}>
-            <AlertTriangle className="w-5 h-5 shrink-0" />
-            <p className="font-semibold">{safetyStatus.desc}</p>
-          </div>
-        )}
+        {/* 4. 시계열 변위 추이 차트 및 일간 변위 차트 */}
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          
+          {/* 차트 1: 누적 변위량 - 굴착고 차트 (2칸 차지) */}
+          <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm lg:col-span-2 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-blue-600" />
+                  시계열 변위 추이 (지하수위 & 굴착고)
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  누적변화량은 하강량이므로 음수 방향으로 그려집니다.
+                </p>
+              </div>
 
-        {/* 5. 메인 모니터링 시계열 차트 영역 */}
-        <section className="glass-panel p-5 rounded-3xl space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <Activity className="w-4 h-4 text-indigo-400" />
-                지하수위 누적 변위량 - 굴착고 통합 분석 모니터링
-              </h2>
-              <p className="text-xs text-gray-400 mt-0.5">
-                실제 수위량 변동 및 미래 5일 동안의 ARIMA / LSTM / Transformer 예측 수치 통합 그래프
-              </p>
+              {/* 기간 및 조건 필터 */}
+              <div className="flex items-center gap-2 bg-gray-100 p-1 rounded-xl text-xs">
+                <button
+                  onClick={() => setFilterPeriod('3')}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                    filterPeriod === '3' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  3개월
+                </button>
+                <button
+                  onClick={() => setFilterPeriod('6')}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                    filterPeriod === '6' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  6개월
+                </button>
+                <button
+                  onClick={() => setFilterPeriod('all')}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                    filterPeriod === 'all' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  전체 기간
+                </button>
+              </div>
             </div>
-            
-            {/* 차트 가이드 레전드 */}
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-              <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-emerald-400 inline-block"></span>실제 변위량</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 border-t border-dashed border-orange-400 inline-block"></span>ARIMA 예측</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 border-t-2 border-double border-purple-400 inline-block"></span>LSTM 예측</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-1 bg-pink-500 inline-block"></span>Transformer 예측</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 bg-sky-500/20 border border-sky-400/30 inline-block"></span>굴착 깊이</span>
-            </div>
-          </div>
 
-          <div className="w-full h-[400px] mt-2">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={chartData} margin={{ top: 20, right: 10, left: 10, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                <XAxis 
-                  dataKey="date" 
-                  stroke="rgba(255,255,255,0.3)" 
-                  fontSize={10} 
-                  tickLine={false} 
-                />
-                
-                {/* Y축 1 (좌측): 누적 변위량 */}
-                <YAxis 
-                  yAxisId="left" 
-                  stroke="rgba(255,255,255,0.3)" 
-                  fontSize={10} 
-                  tickLine={false}
-                  domain={[0, 'dataMax + 2']}
-                >
-                  <Label 
-                    value="누적 변위량 (m)" 
-                    angle={-90} 
-                    position="insideLeft" 
-                    style={{ textAnchor: 'middle', fill: 'rgba(255,255,255,0.4)', fontSize: 10 }} 
+            {/* 차트 영역 */}
+            <div className="w-full h-[360px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={filteredData} margin={{ top: 15, right: 10, left: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.05)" />
+                  <XAxis 
+                    dataKey="date" 
+                    stroke="rgba(0,0,0,0.4)" 
+                    fontSize={10} 
+                    tickLine={false} 
                   />
-                </YAxis>
-
-                {/* Y축 2 (우측): 굴착 깊이 */}
-                <YAxis 
-                  yAxisId="right" 
-                  orientation="right" 
-                  stroke="rgba(255,255,255,0.3)" 
-                  fontSize={10} 
-                  tickLine={false}
-                  domain={[0, 'dataMax + 5']}
-                  reversed={true} // 굴착이 깊어지는 물리적 느낌 구현
-                >
-                  <Label 
-                    value="굴착 깊이 (G.L - m)" 
-                    angle={90} 
-                    position="insideRight" 
-                    style={{ textAnchor: 'middle', fill: 'rgba(255,255,255,0.4)', fontSize: 10 }} 
-                  />
-                </YAxis>
-
-                <Tooltip content={<CustomTooltip />} />
-
-                {/* 1. 굴착고 배경 막대 그래프 (우측 Y축) */}
-                <Bar 
-                  yAxisId="right" 
-                  dataKey="excavationDepth" 
-                  fill="rgba(56, 189, 248, 0.08)" 
-                  stroke="rgba(56, 189, 248, 0.2)"
-                  strokeWidth={1}
-                  barSize={12}
-                  name="굴착 깊이"
-                />
-
-                {/* 2. 관리기준 임계치 수평 기준선 표시 */}
-                <ReferenceLine 
-                  yAxisId="left" 
-                  y={currentInstrument.thresholds.deltaInit.level1} 
-                  stroke="#fbbf24" 
-                  strokeDasharray="4 4" 
-                  strokeWidth={1}
-                >
-                  <Label value="1차 기준 (5.84m)" position="insideBottomLeft" fill="#fbbf24" fontSize={9} />
-                </ReferenceLine>
-                <ReferenceLine 
-                  yAxisId="left" 
-                  y={currentInstrument.thresholds.deltaInit.level2} 
-                  stroke="#f97316" 
-                  strokeDasharray="4 4" 
-                  strokeWidth={1.2}
-                >
-                  <Label value="2차 기준 (7.30m)" position="insideBottomLeft" fill="#f97316" fontSize={9} />
-                </ReferenceLine>
-                <ReferenceLine 
-                  yAxisId="left" 
-                  y={currentInstrument.thresholds.deltaInit.level3} 
-                  stroke="#ef4444" 
-                  strokeDasharray="4 4" 
-                  strokeWidth={1.5}
-                >
-                  <Label value="3차 기준 (8.76m)" position="insideBottomLeft" fill="#ef4444" fontSize={9} />
-                </ReferenceLine>
-
-                {/* 3. AI 예측 시작 지점 수직선 가이드 */}
-                {safetyStatus.forecastStartDate && (
-                  <ReferenceLine 
+                  
+                  {/* 좌측 Y축: 누적변화량(m) - 음수 하강 축 */}
+                  <YAxis 
                     yAxisId="left" 
-                    x={safetyStatus.forecastStartDate} 
-                    stroke="rgba(99, 102, 241, 0.6)" 
-                    strokeWidth={2} 
-                    strokeDasharray="3 3"
+                    stroke="rgba(0,0,0,0.4)" 
+                    fontSize={10} 
+                    tickLine={false}
+                    domain={['dataMin - 0.2', 0.1]} // 음수 범위 매핑
                   >
                     <Label 
-                      value="AI 예측 구간" 
-                      position="top" 
-                      fill="rgba(129, 140, 248, 1)" 
-                      fontSize={10} 
-                      fontWeight="bold"
+                      value="누적변화량 (m)" 
+                      angle={-90} 
+                      position="insideLeft" 
+                      style={{ textAnchor: 'middle', fill: 'rgba(0,0,0,0.5)', fontSize: 10, fontWeight: 'bold' }} 
                     />
+                  </YAxis>
+
+                  {/* 우측 Y축: 굴착고 깊이(m) - 아래로 굴착되도록 표현 */}
+                  <YAxis 
+                    yAxisId="right" 
+                    orientation="right" 
+                    stroke="rgba(0,0,0,0.4)" 
+                    fontSize={10} 
+                    tickLine={false}
+                    domain={['dataMin - 3', 0.5]}
+                  >
+                    <Label 
+                      value="굴착고 (GL-m)" 
+                      angle={90} 
+                      position="insideRight" 
+                      style={{ textAnchor: 'middle', fill: 'rgba(0,0,0,0.5)', fontSize: 10, fontWeight: 'bold' }} 
+                    />
+                  </YAxis>
+
+                  {/* 툴팁 */}
+                  <Tooltip 
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length) {
+                        const data = payload[0].payload;
+                        return (
+                          <div className="p-4 bg-white border border-gray-200 rounded-xl shadow-lg text-xs space-y-2 text-gray-700">
+                            <p className="font-bold flex items-center gap-1">
+                              <Calendar className="w-3.5 h-3.5 text-gray-400" />
+                              {data.date} {data.isForecast && <span className="text-[9px] px-1 bg-blue-100 text-blue-700 rounded border border-blue-200">AI 예측</span>}
+                            </p>
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                              <span className="text-gray-500">굴착 깊이:</span>
+                              <span className="font-bold text-gray-900 text-right">{data.excavationDepth} m</span>
+                              {!data.isForecast ? (
+                                <>
+                                  <span className="text-gray-500">누적변화량:</span>
+                                  <span className="font-bold text-blue-600 text-right">{data.actualDelta} m</span>
+                                  <span className="text-gray-500">지하수위(EL):</span>
+                                  <span className="font-bold text-teal-600 text-right">{data.actualWaterLevel} m</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="text-orange-500">ARIMA 변위:</span>
+                                  <span className="font-bold text-orange-600 text-right">{data.arimaDelta} m</span>
+                                  <span className="text-purple-500">LSTM 변위:</span>
+                                  <span className="font-bold text-purple-600 text-right">{data.lstmDelta} m</span>
+                                  <span className="text-pink-500">Transformer:</span>
+                                  <span className="font-bold text-pink-600 text-right">{data.transformerDelta} m</span>
+                                </>
+                              )}
+                              {weatherImpact && data.precipitation > 0 && (
+                                <>
+                                  <span className="text-blue-500">시뮬레이션 강수:</span>
+                                  <span className="font-bold text-blue-600 text-right">{data.precipitation} mm</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
+                  />
+
+                  {/* 1. 기상청 강수 데이터 연동 시 시뮬레이션 막대 그래프 (배경) */}
+                  {weatherImpact && (
+                    <Bar 
+                      yAxisId="right"
+                      dataKey="precipitation"
+                      fill="rgba(37, 99, 235, 0.08)"
+                      stroke="rgba(37, 99, 235, 0.2)"
+                      barSize={10}
+                      name="일강수량 (mm)"
+                    />
+                  )}
+
+                  {/* 2. 관리기준 수평 임계선 (음수 영역에 표시) */}
+                  <ReferenceLine 
+                    yAxisId="left" 
+                    y={-currentInstrument.thresholds.deltaInit.level1} 
+                    stroke="#eab308" 
+                    strokeDasharray="4 4" 
+                    strokeWidth={1}
+                  >
+                    <Label value="1차 (1.59m)" position="insideBottomLeft" fill="#d97706" fontSize={8} />
                   </ReferenceLine>
-                )}
+                  <ReferenceLine 
+                    yAxisId="left" 
+                    y={-currentInstrument.thresholds.deltaInit.level2} 
+                    stroke="#f97316" 
+                    strokeDasharray="4 4" 
+                    strokeWidth={1.2}
+                  >
+                    <Label value="2차 (1.99m)" position="insideBottomLeft" fill="#ea580c" fontSize={8} />
+                  </ReferenceLine>
+                  <ReferenceLine 
+                    yAxisId="left" 
+                    y={-currentInstrument.thresholds.deltaInit.level3} 
+                    stroke="#ef4444" 
+                    strokeDasharray="4 4" 
+                    strokeWidth={1.5}
+                  >
+                    <Label value="3차 (2.39m)" position="insideBottomLeft" fill="#dc2626" fontSize={8} />
+                  </ReferenceLine>
 
-                {/* 4. 실제 지하수위 누적변위량 (실선) */}
-                <Line 
-                  yAxisId="left" 
-                  type="monotone" 
-                  dataKey="actualDelta" 
-                  stroke="#34d399" 
-                  strokeWidth={3} 
-                  dot={{ r: 2 }}
-                  activeDot={{ r: 6 }}
-                  name="실제 변위량"
-                  connectNulls
-                />
+                  {/* AI 예측 구간 경계선 */}
+                  {safetyStatus.forecastStartDate && (
+                    <ReferenceLine 
+                      yAxisId="left" 
+                      x={safetyStatus.forecastStartDate} 
+                      stroke="#4f46e5" 
+                      strokeWidth={1.5} 
+                      strokeDasharray="3 3"
+                    >
+                      <Label value="AI 미래 예측 5일" position="top" fill="#4f46e5" fontSize={9} fontWeight="bold" />
+                    </ReferenceLine>
+                  )}
 
-                {/* 5. ARIMA 예측 수평/점선 */}
-                <Line 
-                  yAxisId="left" 
-                  type="monotone" 
-                  dataKey="arimaDelta" 
-                  stroke="#fb923c" 
-                  strokeWidth={2} 
-                  strokeDasharray="4 4"
-                  dot={{ r: 3 }}
-                  name="ARIMA 예측"
-                  connectNulls
-                />
+                  {/* 3. 굴착고 라인 그래프 (우측 Y축, 점선) */}
+                  <Line 
+                    yAxisId="right" 
+                    type="monotone" 
+                    dataKey="excavationDepth" 
+                    stroke="#0284c7" 
+                    strokeWidth={2} 
+                    strokeDasharray="4 4"
+                    dot={false}
+                    name="굴착고"
+                  />
 
-                {/* 6. LSTM 예측 이중선 형태 모사 */}
-                <Line 
-                  yAxisId="left" 
-                  type="monotone" 
-                  dataKey="lstmDelta" 
-                  stroke="#c084fc" 
-                  strokeWidth={2}
-                  strokeDasharray="7 2"
-                  dot={{ r: 3 }}
-                  name="LSTM 예측"
-                  connectNulls
-                />
+                  {/* 4. 실제 지하수위 누적변위량 (실선) */}
+                  <Line 
+                    yAxisId="left" 
+                    type="monotone" 
+                    dataKey={noiseFilter ? "filteredDelta" : "actualDelta"} 
+                    stroke="#2563eb" 
+                    strokeWidth={3} 
+                    dot={{ r: 1.5 }}
+                    activeDot={{ r: 5 }}
+                    name={noiseFilter ? "실제 누적변위 (이동평균)" : "실제 누적변위"}
+                    connectNulls
+                  />
 
-                {/* 7. Transformer 예측 굵은 실선 */}
-                <Line 
-                  yAxisId="left" 
-                  type="monotone" 
-                  dataKey="transformerDelta" 
-                  stroke="#f472b6" 
-                  strokeWidth={3} 
-                  dot={{ r: 4 }}
-                  name="Transformer 예측"
-                  connectNulls
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
+                  {/* 5. ARIMA 예측 (점선) */}
+                  <Line 
+                    yAxisId="left" 
+                    type="monotone" 
+                    dataKey="arimaDelta" 
+                    stroke="#ea580c" 
+                    strokeWidth={2} 
+                    strokeDasharray="4 4"
+                    dot={{ r: 2 }}
+                    name="ARIMA 예측"
+                    connectNulls
+                  />
+
+                  {/* 6. LSTM 예측 (이중선 스타일) */}
+                  <Line 
+                    yAxisId="left" 
+                    type="monotone" 
+                    dataKey="lstmDelta" 
+                    stroke="#9333ea" 
+                    strokeWidth={2} 
+                    strokeDasharray="7 2"
+                    dot={{ r: 2 }}
+                    name="LSTM 예측"
+                    connectNulls
+                  />
+
+                  {/* 7. Transformer 예측 (굵은 실선) */}
+                  <Line 
+                    yAxisId="left" 
+                    type="monotone" 
+                    dataKey="transformerDelta" 
+                    stroke="#db2777" 
+                    strokeWidth={3} 
+                    dot={{ r: 3 }}
+                    name="Transformer 예측"
+                    connectNulls
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* 차트 2: 일간변위 (m/day) 차트 (1칸 차지) */}
+          <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-between space-y-4">
+            <div>
+              <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-blue-600" />
+                일간변위 모니터링 (m/day)
+              </h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                하루 단위의 미세 변동량을 Bar 차트로 표시합니다.
+              </p>
+            </div>
+
+            <div className="w-full h-[220px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={filteredData} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.03)" />
+                  <XAxis dataKey="date" hide />
+                  <YAxis stroke="rgba(0,0,0,0.4)" fontSize={9} tickLine={false} />
+                  
+                  {/* 일간변위 기준 임계선 점선 */}
+                  <ReferenceLine y={0.50} stroke="#eab308" strokeDasharray="3 3" strokeWidth={1} />
+                  <ReferenceLine y={0.75} stroke="#f97316" strokeDasharray="3 3" strokeWidth={1} />
+                  <ReferenceLine y={1.00} stroke="#ef4444" strokeDasharray="3 3" strokeWidth={1} />
+                  <ReferenceLine y={-0.50} stroke="#eab308" strokeDasharray="3 3" strokeWidth={1} />
+
+                  <Tooltip 
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length) {
+                        const data = payload[0].payload;
+                        return (
+                          <div className="p-2 bg-white border border-gray-200 rounded-lg shadow-md text-xs text-gray-700">
+                            <p className="font-semibold">{data.date}</p>
+                            <p className="text-blue-600 font-bold mt-1">
+                              일간변위: {data.isForecast ? (data.arimaRate || 0).toFixed(3) : (data.actualRate || 0).toFixed(3)} m/day
+                            </p>
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
+                  />
+
+                  {/* 일간변위 Bar */}
+                  <Bar 
+                    dataKey={(d) => d.isForecast ? d.arimaRate : d.actualRate} 
+                    fill="rgba(37, 99, 235, 0.75)" 
+                    radius={[2, 2, 0, 0]}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+            
+            {/* 가이드 지침 */}
+            <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl text-[10px] text-gray-500 leading-relaxed">
+              * 일간 변위의 3차 위험선은 **1.00 m/day**이며, 수위의 급작스런 출렁임이나 누수 현상을 미세 진단할 때 활용됩니다.
+            </div>
+          </div>
+
+        </section>
+
+        {/* 5. 계측 데이터 테이블 섹션 */}
+        <section className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-3 border-b border-gray-100">
+            <div className="flex items-center gap-2">
+              <span className="w-1.5 h-4 bg-blue-600 rounded-full"></span>
+              <h2 className="text-lg font-black text-gray-900">계측 원시 데이터 대장</h2>
+              <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
+                계측 레코드 수: {tableData.length}건
+              </span>
+            </div>
+            
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={handleDownload}
+                className="px-3.5 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-sm transition-all"
+              >
+                <Download className="w-3.5 h-3.5" />
+                내보내기 (CSV)
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 text-gray-500 font-semibold border-b border-gray-200">
+                  <th className="p-3">계측일자</th>
+                  <th className="p-3">관상단 (EL+m)</th>
+                  <th className="p-3">측정치 (EL-m)</th>
+                  <th className="p-3">측정치 (GL-m)</th>
+                  <th className="p-3">누적변화량 (m)</th>
+                  <th className="p-3">일간변위 (m/day)</th>
+                  <th className="p-3">굴착고 (GL-m)</th>
+                  <th className="p-3 text-center">초기치 여부</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 font-medium">
+                {paginatedTableData.map((row, index) => (
+                  <tr key={index} className="hover:bg-slate-50/50 transition-colors">
+                    <td className="p-3 font-semibold text-slate-700">{row.date}</td>
+                    <td className="p-3 text-slate-600">{row.pipeTop.toFixed(3)}</td>
+                    <td className="p-3 text-slate-600">{row.actualWaterLevel.toFixed(3)}</td>
+                    <td className="p-3 text-slate-600">{row.actualGL.toFixed(3)}</td>
+                    <td className={`p-3 font-bold ${Math.abs(row.actualDelta) >= currentInstrument.thresholds.deltaInit.level1 ? 'text-red-600' : 'text-slate-900'}`}>
+                      {row.actualDelta.toFixed(3)}
+                    </td>
+                    <td className="p-3 text-slate-600">{row.actualRate.toFixed(3)}</td>
+                    <td className="p-3 text-sky-700 font-bold">{row.excavationDepth.toFixed(3)}</td>
+                    <td className="p-3 text-center">
+                      {index === tableData.length - 1 - (currentPage-1)*itemsPerPage ? (
+                        <span className="text-[9px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold uppercase tracking-wider">초기치</span>
+                      ) : (
+                        <span className="text-gray-300">-</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* 테이블 하단 페이징 컨트롤 */}
+          <div className="flex items-center justify-between pt-4 border-t border-gray-100 text-xs">
+            <p className="text-gray-500">
+              전체 {totalPages}페이지 중 {currentPage}페이지 표시
+            </p>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1}
+                className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              {[...Array(totalPages)].map((_, i) => {
+                const pageNum = i + 1;
+                // 페이징이 너무 많을 경우 현재 페이지 주변만 표시
+                if (pageNum === 1 || pageNum === totalPages || Math.abs(pageNum - currentPage) <= 2) {
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => handlePageChange(pageNum)}
+                      className={`px-3 py-1.5 rounded-lg font-bold border transition-all ${
+                        currentPage === pageNum
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                } else if (pageNum === 2 || pageNum === totalPages - 1) {
+                  return <span key={i} className="text-gray-400 px-1">...</span>;
+                }
+                return null;
+              })}
+              <button
+                onClick={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </section>
 
-        {/* 6. AI 시점 분석 & 모델별 속성 비교 패널 */}
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* ARIMA 모델 카드 */}
-          <div className="glass-panel p-5 rounded-2xl border-l-4 border-orange-500/50 space-y-2">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
-                <Cpu className="w-4 h-4 text-orange-400" />
-                ARIMA (통계 모델)
-              </h4>
-              <span className="text-[10px] text-orange-400 px-2 py-0.5 bg-orange-500/10 rounded">선형적 단기추세</span>
-            </div>
-            <p className="text-[11px] leading-relaxed text-gray-400">
-              이전 계측 데이터의 변동 속도 및 자기회귀(AR)적 변위 분석을 반영합니다. 돌발적인 공사 환경 변화보다는 기존의 평시 지하수위 감쇠 트렌드를 점진적으로 외삽(Extrapolate)하여 도출해 냅니다.
-            </p>
+        {/* 6. AI 시점 예측 모델 고도화 분석 내용 */}
+        <section className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 space-y-4">
+          <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+            <span className="w-1.5 h-4 bg-indigo-600 rounded-full"></span>
+            <h2 className="text-lg font-black text-gray-900">시계열 AI 예측 알고리즘 상세 명세</h2>
           </div>
-
-          {/* LSTM 모델 카드 */}
-          <div className="glass-panel p-5 rounded-2xl border-l-4 border-purple-500/50 space-y-2">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
-                <Cpu className="w-4 h-4 text-purple-400" />
-                LSTM (순환 딥러닝)
-              </h4>
-              <span className="text-[10px] text-purple-400 px-2 py-0.5 bg-purple-500/10 rounded">다변량 시퀀스 학습</span>
+          
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* ARIMA 상세 */}
+            <div className="bg-orange-50/40 border border-orange-100 rounded-2xl p-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <Cpu className="w-5 h-5 text-orange-600" />
+                <h3 className="font-bold text-gray-900">ARIMA (선형 추세 분석)</h3>
+              </div>
+              <p className="text-xs leading-relaxed text-gray-600">
+                자기회귀(AR) 성질과 이동평균(MA) 필터를 융합한 전통 시계열 통계 모델입니다. 지하수위의 선형적 연속 흐름을 연장하여 단기 예측치를 안정적으로 생성합니다.
+              </p>
+              <div className="bg-white/80 p-2.5 rounded-xl border border-orange-200/50 text-[10px] font-mono text-orange-800 leading-tight">
+                <strong>고도화 방안 (ARIMAX):</strong><br />
+                강수량과 외부 굴착 일정을 외생변수(X)로 주입하는 다변량 ARIMAX로 고도화하여 기상 영향을 반영합니다.
+              </div>
             </div>
-            <p className="text-[11px] leading-relaxed text-gray-400">
-              과거 시계열 데이터의 장기 및 단기 종속성을 보존하면서, 외생 변수인 <strong>굴착 깊이(Depth)</strong>가 증가함에 따라 지하수 유입로가 차단/개방되는 비선형적인 물리 반응을 학습하고 모사합니다.
-            </p>
-          </div>
 
-          {/* Transformer 모델 카드 */}
-          <div className="glass-panel p-5 rounded-2xl border-l-4 border-pink-500/50 space-y-2">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
-                <Cpu className="w-4 h-4 text-pink-400" />
-                Transformer (어텐션 딥러닝)
-              </h4>
-              <span className="text-[10px] text-pink-400 px-2 py-0.5 bg-pink-500/10 rounded">어텐션 맥락 추출</span>
+            {/* LSTM 상세 */}
+            <div className="bg-purple-50/40 border border-purple-100 rounded-2xl p-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <Cpu className="w-5 h-5 text-purple-600" />
+                <h3 className="font-bold text-gray-900">LSTM (순환 신경망)</h3>
+              </div>
+              <p className="text-xs leading-relaxed text-gray-600">
+                셀 상태(Cell State)와 게이트 제어를 통해 계측 데이터의 장단기 시계열 패턴을 기억하는 딥러닝 아키텍처입니다. 굴착고 증가에 따른 누적 수위 하강 비선형성을 효과적으로 모델링합니다.
+              </p>
+              <div className="bg-white/80 p-2.5 rounded-xl border border-purple-200/50 text-[10px] font-mono text-purple-800 leading-tight">
+                <strong>고도화 방안 (Multivariate LSTM):</strong><br />
+                수위 변화 이력에 최근 3일간 누적 강수 및 일일 굴착 속도 피처를 병렬 투입해 학습 효율을 높입니다.
+              </div>
             </div>
-            <p className="text-[11px] leading-relaxed text-gray-400">
-              Self-Attention 메커니즘을 적용하여 시계열 내에서 급격한 굴착고 변동 및 수위 강하 시점에 높은 인지적 가중치를 부여합니다. 미래 공정 스케줄 속 수위 변동 임계 돌파 가능성을 가장 정밀히 진단합니다.
-            </p>
+
+            {/* Transformer 상세 */}
+            <div className="bg-pink-50/40 border border-pink-100 rounded-2xl p-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <Cpu className="w-5 h-5 text-pink-600" />
+                <h3 className="font-bold text-gray-900">Transformer (어텐션 딥러닝)</h3>
+              </div>
+              <p className="text-xs leading-relaxed text-gray-600">
+                Self-Attention 가중치 계산을 통해, 먼 시점의 굴착 활동이나 급격한 지반 거동 이벤트를 현재 및 미래 예측 시점에 직접 연결해 가중치를 부여하는 최첨단 모델입니다.
+              </p>
+              <div className="bg-white/80 p-2.5 rounded-xl border border-pink-200/50 text-[10px] font-mono text-pink-800 leading-tight">
+                <strong>고도화 방안 (Temporal Fusion):</strong><br />
+                기온/강수 및 계절적 주기(주/월 단위) 마스킹 레이어를 융합하여 기상 이상 기후 시의 강하 방지력을 예측합니다.
+              </div>
+            </div>
+
           </div>
         </section>
 
       </main>
 
       {/* 7. 하단 푸터 */}
-      <footer className="border-t border-white/5 bg-[#0f1424] py-4 px-6 text-center text-[10px] text-gray-500 mt-12">
-        <p>© 2026 월곶-판교 복선전철 제4공구 현장 계측 시스템. All Rights Reserved. (AI Groundwater Level Prediction Dashboard Demo)</p>
+      <footer className="border-t border-gray-200 bg-white py-4 px-6 text-center text-[10px] text-gray-400">
+        <p>© 2026 월곶-판교 복선전철 제4공구 현장 계측 시스템. (AI Groundwater Level Control Console)</p>
       </footer>
     </div>
   );
