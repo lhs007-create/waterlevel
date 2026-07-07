@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+/* Custom premium styling defaults */
+body {
+  margin: 0;
+  background-color: #0b0f19;
+  color: #f3f4f6;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Glassmorphism utility card styling */
+.glass-panel {
+  background: rgba(17, 25, 40, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
