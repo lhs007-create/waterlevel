@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python Virtual Environment
+.venv/
+__pycache__/
+*.pyc
+
+# Excel temp files
+~$*
