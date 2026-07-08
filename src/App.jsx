@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { groundwaterData } from './data/groundwaterData';
+import { backtestResults } from './data/backtestResults';
 import { 
   ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis, 
   CartesianGrid, Tooltip, Legend, ReferenceLine
@@ -11,12 +12,46 @@ import {
   Eye, Check
 } from 'lucide-react';
 
+const backtestAnalysis = {
+  'W-P-001': {
+    rank: 'LSTM (0.401m) ＞ ARIMA (0.413m) ＞ Transformer (0.456m)',
+    arima: '과거의 완만한 선형 트렌드를 따라 미래 30일도 안정적인 하강 궤적을 그리며 무난한 예측(MAE: 0.413m)을 수행했습니다.',
+    lstm: '시퀀스의 연속적인 장단기 기억을 보존하는 LSTM은 W-1의 선형적인 감소세 흐름을 가장 정확하게 포착하여 오차를 40.1cm(MAE: 0.401m)로 최소화했습니다.',
+    transformer: '수위 급하락 변곡점을 찾는 과정에서 약간의 소폭 요동(Fluctuation)이 발생하여, 오차가 45.6cm(MAE: 0.456m)로 세 모델 중 가장 미세하게 컸지만 전반적인 추세선은 안정적으로 유지했습니다.'
+  },
+  'W-P-002': {
+    rank: 'Transformer (0.226m) ＞ LSTM (0.266m) ＞ ARIMA (0.660m)',
+    arima: '과거의 단순 선형 추세에 의존하기 때문에, 굴착 가속에 의해 수위 하강이 급변하는 비선형적인 꺾임 패턴을 추적하지 못해 오차가 66.0cm(MAE: 0.660m)로 벌어졌습니다.',
+    lstm: '굴착 깊이가 깊어짐에 따라 지하수위 감소가 가속화되는 공정적 인과관계를 학습하여 오차를 26.6cm(MAE: 0.266m) 수준으로 낮추었습니다.',
+    transformer: 'Self-Attention을 활용하여 굴착고가 급격히 하강하는 시점을 동적으로 집중 분석함으로써 변곡점을 가장 훌륭히 모사하여 최저 오차(MAE: 0.226m)를 보였습니다.'
+  },
+  'W-P-003': {
+    rank: 'Transformer (0.097m) ＞ LSTM (0.146m) ＞ ARIMA (0.361m)',
+    arima: '계단식 변곡점들의 평균적인 트렌드만 연장하여 36.1cm(MAE: 0.361m)의 보통 수준 오차를 보였습니다.',
+    lstm: '시계열의 과거 단계적 패턴을 학습한 LSTM이 굴착량 증가에 부합하는 계단식 수위 하락을 매끄럽게 묘사하여 14.6cm(MAE: 0.146m)의 높은 예측력을 보였습니다.',
+    transformer: '데이터의 규칙성이 매우 뚜렷한 특징을 잘 파악하여, Self-Attention 메커니즘을 통해 30일 예측 범위 동안 평균 오차 단 9.7cm(MAE: 0.097m)라는 극소 오차로 수위 저하 곡선을 그려냈습니다.'
+  },
+  'W-P-004': {
+    rank: 'ARIMA (0.824m) ＞ Transformer (0.951m) ＞ LSTM (1.625m)',
+    arima: '굴착 깊이 변수를 배제하고 이전의 정체 경향을 평활화하여 역설적으로 오차가 82.4cm(MAE: 0.824m)로 가장 적었습니다. 지질 이변이 발생한 돌발 상황에서 비교 모델로서의 가치가 높습니다.',
+    lstm: '굴착 깊이가 급락함에 따라 지하수위도 대폭락할 것으로 학습된 가중치에 의해 과도하게 깊은 하강 곡선을 예측하면서 1.62m(MAE: 1.625m)의 가장 큰 예측 오차를 유발했습니다.',
+    transformer: '굴착과 수위 감소의 인과 가중치로 인해 수위가 떨어질 것으로 과도히 예측했으나, Self-Attention의 규제 필터 효과로 LSTM보다는 덜 극단적으로 예측하여 오차를 95.1cm(MAE: 0.951m) 수준으로 방어했습니다.'
+  },
+  'W-P-005': {
+    rank: 'Transformer (0.046m) ＞ ARIMA (0.069m) ＞ LSTM (0.417m)',
+    arima: '수위 변화가 없는 완만한 평탄선을 안정적으로 이어가 오차 6.9cm(MAE: 0.069m)의 매우 우수한 결과를 냈습니다.',
+    lstm: '수계가 정적인 상태임에도 학습 단계에서 들어간 센서의 미세 미시 노이즈(Noise)를 비선형적 징후로 오인하여 예측선이 출렁임으로써 오차가 41.7cm(MAE: 0.417m)로 다소 불리해졌습니다.',
+    transformer: '미세 소음을 성공적으로 필터링하고 완만한 정적 상태를 정밀하게 표현하여, 하루 평균 4.6cm(MAE: 0.046m)라는 극소 오차로 모든 지점 중 최고의 성적을 거두었습니다.'
+  }
+};
+
 function App() {
   const { projectInfo, instruments } = groundwaterData;
   const instrumentIds = Object.keys(instruments);
   
   // 상태 관리
   const [selectedId, setSelectedId] = useState(instrumentIds[0] || 'W-P-001');
+  const [activeTab, setActiveTab] = useState('monitoring'); // 'monitoring' | 'backtest'
   const [filterPeriod, setFilterPeriod] = useState('3'); // '3'개월, '6'개월, 'all'전체
   const [weatherImpact, setWeatherImpact] = useState(false); // 기상 데이터 연동 여부
   const [noiseFilter, setNoiseFilter] = useState(false); // 노이즈 필터링 여부
@@ -296,6 +331,39 @@ function App() {
     );
   };
 
+  const renderBacktestLegend = (props) => {
+    return (
+      <div className="pt-4.5 border-t border-gray-250 w-full flex flex-col items-center">
+        <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 mb-1 text-xs font-bold text-gray-800">
+          <span className="flex items-center gap-2 text-blue-700">
+            <span className="w-5 h-1 bg-blue-600 rounded inline-block"></span>
+            실제 누적변위
+          </span>
+          
+          <span className="flex items-center gap-2 text-orange-655">
+            <span className="flex items-center font-mono font-black tracking-tighter text-orange-500">----</span>
+            ARIMA 예측 (30일)
+          </span>
+          
+          <span className="flex items-center gap-2 text-purple-650">
+            <span className="flex items-center font-mono font-bold tracking-widest text-purple-500">- - -</span>
+            LSTM 예측 (30일)
+          </span>
+          
+          <span className="flex items-center gap-2 text-pink-650">
+            <span className="w-5 h-1.5 bg-pink-500 rounded inline-block"></span>
+            Transformer 예측 (30일)
+          </span>
+
+          <span className="flex items-center gap-2 text-indigo-700">
+            <span className="flex items-center font-mono text-[10px] font-bold text-indigo-500 tracking-tighter">- - - -</span>
+            학습/예측 경계선
+          </span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col font-sans antialiased">
       
@@ -357,6 +425,32 @@ function App() {
       {/* 2. 대시보드 콘텐츠 영역 */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6">
         
+        {/* 모드 선택 탭 (실시간 관제 vs AI 백테스팅) */}
+        <div className="flex bg-slate-100 p-1.5 rounded-2xl border border-slate-200 w-fit gap-1 shadow-inner">
+          <button
+            onClick={() => setActiveTab('monitoring')}
+            className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'monitoring'
+                ? 'bg-white text-blue-700 border border-slate-250 shadow-sm font-extrabold'
+                : 'text-slate-600 hover:text-slate-900 bg-transparent'
+            }`}
+          >
+            <Activity className="w-4 h-4" />
+            실시간 모니터링 관제
+          </button>
+          <button
+            onClick={() => setActiveTab('backtest')}
+            className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'backtest'
+                ? 'bg-white text-blue-700 border border-slate-250 shadow-sm font-extrabold'
+                : 'text-slate-600 hover:text-slate-900 bg-transparent'
+            }`}
+          >
+            <Cpu className="w-4 h-4" />
+            AI 백테스팅 검증 (30일)
+          </button>
+        </div>
+
         {/* 상단 탭 셀렉터 - W-1 ~ W-10 */}
         <div className="bg-white p-3 rounded-2xl border border-gray-200 shadow-sm flex items-center gap-2 overflow-x-auto">
           <span className="text-xs font-extrabold text-gray-700 uppercase tracking-wider px-3 shrink-0">계측기 관측공 전환:</span>
@@ -378,7 +472,9 @@ function App() {
           ))}
         </div>
 
-        {/* 3. 설치 및 계측 정보 섹션 */}
+        {activeTab === 'monitoring' ? (
+          <>
+            {/* 3. 설치 및 계측 정보 섹션 */}
         <section className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 space-y-6">
           <div className="flex items-center gap-2.5 border-b border-gray-200 pb-3">
             <span className="w-2 h-5 bg-blue-600 rounded-full"></span>
@@ -1158,13 +1254,525 @@ function App() {
 
           </div>
         </section>
+      </>
+    ) : (
+      <div className="space-y-6">
+        {!backtestResults[selectedId] ? (
+          <div className="bg-amber-50 border border-amber-300 rounded-3xl p-8 text-center space-y-4 shadow-sm">
+            <div className="w-12 h-12 rounded-full bg-amber-100 border border-amber-200 flex items-center justify-center mx-auto text-amber-600">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-lg font-black text-amber-900">백테스팅 데이터 분석 불가</h3>
+              <p className="text-sm font-semibold text-amber-800 leading-relaxed max-w-lg mx-auto">
+                {instruments[selectedId]?.displayName || selectedId} 계측기는 실제 데이터 수집 기간이 부족하여 30일 학습 및 30일 예측 검증을 지원하지 않습니다. (최소 60일의 실측 데이터 필요)
+                <br/>
+                <span className="text-xs text-amber-700 mt-2 block">ⓘ W-10 계측기는 현재 수집된 실제 데이터가 총 44일이므로 백테스팅 대상에서 제외되었습니다.</span>
+              </p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* 1. 백테스팅 개요 카드 */}
+            <div className="bg-slate-50 border border-slate-200 rounded-3xl p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-sm">
+              <div className="space-y-1">
+                <h3 className="text-lg font-black text-gray-900 flex items-center gap-2">
+                  <Cpu className="w-5 h-5 text-blue-600 animate-pulse" />
+                  {instruments[selectedId].displayName} 예측 오차 검증 (Backtesting)
+                </h3>
+                <p className="text-xs text-slate-655 font-bold">
+                  실측 데이터의 최근 60일을 활용하여 앞의 30일 학습 후 뒤의 30일(검증 기간) 실제 데이터와의 모델별 오차 편차를 비교 평가합니다.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 shrink-0">
+                <button
+                  onClick={() => window.print()}
+                  className="px-4 py-2.5 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-700 hover:border-emerald-800 shadow-md shadow-emerald-500/20 cursor-pointer flex items-center gap-1.5 transition-all active:scale-95"
+                >
+                  <Download className="w-4 h-4" />
+                  📄 PDF 보고서 인쇄
+                </button>
+                <div className="text-xs bg-white border border-slate-200 px-4 py-2.5 rounded-xl shadow-inner font-extrabold text-slate-700">
+                  분석 구간: {backtestResults[selectedId].comparison[0]?.date} ~ {backtestResults[selectedId].comparison[backtestResults[selectedId].comparison.length - 1]?.date} (총 60일)
+                </div>
+              </div>
+            </div>
 
-      </main>
+            {/* 2. 오차 지표 요약 카드 */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* ARIMA Card */}
+              <div className="bg-orange-50/40 border border-orange-200 rounded-2xl p-5 shadow-sm space-y-3">
+                <div className="flex items-center gap-2 pb-2 border-b border-orange-100">
+                  <Cpu className="w-5 h-5 text-orange-600" />
+                  <h4 className="font-extrabold text-sm text-gray-900">ARIMA (선형/통계) 오차 지표</h4>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-white p-2.5 rounded-xl border border-orange-200">
+                    <span className="text-[10px] text-gray-500 font-bold block">MAE</span>
+                    <span className="text-xs font-black text-orange-655">{backtestResults[selectedId].metrics.arima.mae.toFixed(3)}m</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-xl border border-orange-200">
+                    <span className="text-[10px] text-gray-500 font-bold block">RMSE</span>
+                    <span className="text-xs font-black text-orange-655">{backtestResults[selectedId].metrics.arima.rmse.toFixed(3)}m</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-xl border border-orange-200">
+                    <span className="text-[10px] text-gray-500 font-bold block">MAPE</span>
+                    <span className="text-xs font-black text-orange-655">{backtestResults[selectedId].metrics.arima.mape.toFixed(1)}%</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* LSTM Card */}
+              <div className="bg-purple-50/40 border border-purple-200 rounded-2xl p-5 shadow-sm space-y-3">
+                <div className="flex items-center gap-2 pb-2 border-b border-purple-100">
+                  <Cpu className="w-5 h-5 text-purple-600" />
+                  <h4 className="font-extrabold text-sm text-gray-900">LSTM (순환신경망) 오차 지표</h4>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-white p-2.5 rounded-xl border border-purple-200">
+                    <span className="text-[10px] text-gray-500 font-bold block">MAE</span>
+                    <span className="text-xs font-black text-purple-650">{backtestResults[selectedId].metrics.lstm.mae.toFixed(3)}m</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-xl border border-purple-200">
+                    <span className="text-[10px] text-gray-500 font-bold block">RMSE</span>
+                    <span className="text-xs font-black text-purple-650">{backtestResults[selectedId].metrics.lstm.rmse.toFixed(3)}m</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-xl border border-purple-200">
+                    <span className="text-[10px] text-gray-500 font-bold block">MAPE</span>
+                    <span className="text-xs font-black text-purple-650">{backtestResults[selectedId].metrics.lstm.mape.toFixed(1)}%</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Transformer Card */}
+              <div className="bg-pink-50/40 border border-pink-200 rounded-2xl p-5 shadow-sm space-y-3">
+                <div className="flex items-center gap-2 pb-2 border-b border-pink-100">
+                  <Cpu className="w-5 h-5 text-pink-650" />
+                  <h4 className="font-extrabold text-sm text-gray-900">Transformer (어텐션) 오차 지표</h4>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-white p-2.5 rounded-xl border border-pink-200">
+                    <span className="text-[10px] text-gray-500 font-bold block">MAE</span>
+                    <span className="text-xs font-black text-pink-650">{backtestResults[selectedId].metrics.transformer.mae.toFixed(3)}m</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-xl border border-pink-200">
+                    <span className="text-[10px] text-gray-500 font-bold block">RMSE</span>
+                    <span className="text-xs font-black text-pink-650">{backtestResults[selectedId].metrics.transformer.rmse.toFixed(3)}m</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-xl border border-pink-200">
+                    <span className="text-[10px] text-gray-500 font-bold block">MAPE</span>
+                    <span className="text-xs font-black text-pink-650">{backtestResults[selectedId].metrics.transformer.mape.toFixed(1)}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 3. 백테스팅 오차 비교 차트 */}
+            <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm space-y-4">
+              <div>
+                <h3 className="text-lg font-black text-gray-900 flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-blue-600 animate-pulse" />
+                  백테스팅 30일 예측 수위 vs 실제 수위 비교 곡선
+                </h3>
+                <p className="text-xs text-slate-600 font-semibold">
+                  중간 점선 경계선(30일 시점)을 기준으로 좌측은 학습 데이터(실제 누적변위), 우측은 30일간의 모델별 예측선과 실제 실측수위(파란 실선)를 대조합니다.
+                </p>
+              </div>
+
+              <div className="w-full h-[420px] bg-slate-50/50 p-2.5 rounded-2xl border border-gray-100">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={backtestResults[selectedId].comparison} margin={{ top: 25, right: 45, left: 15, bottom: 15 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
+                    <XAxis 
+                      dataKey="date" 
+                      stroke="rgba(0,0,0,0.6)" 
+                      fontSize={11} 
+                      fontWeight="bold"
+                      tickLine={true} 
+                      minTickGap={20}
+                    />
+                    <YAxis 
+                      stroke="rgba(0,0,0,0.6)" 
+                      fontSize={11} 
+                      fontWeight="bold"
+                      tickLine={true}
+                      domain={[-20, 0]}
+                      ticks={[0, -4, -8, -12, -16, -20]}
+                      tickFormatter={(v) => Number(v).toFixed(1) + 'm'}
+                    />
+                    <Tooltip 
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const data = payload[0].payload;
+                          return (
+                            <div className="p-4 bg-white border-2 border-gray-300 rounded-xl shadow-xl text-xs space-y-2 text-gray-800 font-bold">
+                              <p className="font-black border-b border-gray-200 pb-1.5 flex items-center gap-1.5">
+                                <Calendar className="w-4 h-4 text-blue-500" />
+                                {data.date} {data.isForecastPeriod ? <span className="text-[10px] px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded border border-indigo-300 font-bold">예측/검증 기간</span> : <span className="text-[10px] px-2 py-0.5 bg-blue-100 text-blue-700 rounded border border-blue-300 font-bold">모델 학습 기간</span>}
+                              </p>
+                              <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+                                <span className="text-gray-500 font-medium">실제 누적변위:</span>
+                                <span className="text-blue-600 text-right font-black">{data.actual.toFixed(3)} m</span>
+                                {data.isForecastPeriod && (
+                                  <>
+                                    <span className="text-orange-500 font-medium">ARIMA 예측:</span>
+                                    <span className="text-orange-600 text-right font-black">{data.arima !== null ? data.arima.toFixed(3) : '-'} m</span>
+                                    <span className="text-purple-500 font-medium">LSTM 예측:</span>
+                                    <span className="text-purple-650 text-right font-black">{data.lstm !== null ? data.lstm.toFixed(3) : '-'} m</span>
+                                    <span className="text-pink-500 font-medium">Transformer:</span>
+                                    <span className="text-pink-650 text-right font-black">{data.transformer !== null ? data.transformer.toFixed(3) : '-'} m</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    
+                    {/* 학습 / 검증 30일 분할 수직 기준선 */}
+                    <ReferenceLine 
+                      x={backtestResults[selectedId].comparison[30]?.date} 
+                      stroke="#4f46e5" 
+                      strokeWidth={3} 
+                      strokeDasharray="4 3"
+                    />
+
+                    {/* 실제값 선 */}
+                    <Line 
+                      type="monotone" 
+                      dataKey="actual" 
+                      stroke="#2563eb" 
+                      strokeWidth={4} 
+                      dot={{ r: 2 }}
+                      name="실제 누적변위"
+                    />
+                    
+                    {/* ARIMA 예측 */}
+                    <Line 
+                      type="monotone" 
+                      dataKey="arima" 
+                      stroke="#f97316" 
+                      strokeWidth={3} 
+                      strokeDasharray="5 4"
+                      dot={{ r: 4, fill: "#f97316", strokeWidth: 1 }}
+                      name="ARIMA 예측"
+                      connectNulls
+                    />
+
+                    {/* LSTM 예측 */}
+                    <Line 
+                      type="monotone" 
+                      dataKey="lstm" 
+                      stroke="#8b5cf6" 
+                      strokeWidth={3} 
+                      strokeDasharray="9 3"
+                      dot={{ r: 4, fill: "#8b5cf6", strokeWidth: 1 }}
+                      name="LSTM 예측"
+                      connectNulls
+                    />
+
+                    {/* Transformer 예측 */}
+                    <Line 
+                      type="monotone" 
+                      dataKey="transformer" 
+                      stroke="#ec4899" 
+                      strokeWidth={4} 
+                      dot={{ r: 5, fill: "#ec4899", strokeWidth: 1 }}
+                      name="Transformer 예측"
+                      connectNulls
+                    />
+
+                    <Legend content={renderBacktestLegend} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* 4. 일자별 상세 오차 테이블 */}
+            <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 space-y-4">
+              <div className="flex items-center gap-2.5 pb-3 border-b border-gray-200">
+                <span className="w-2 h-5 bg-blue-600 rounded-full"></span>
+                <h2 className="text-xl font-black text-gray-955">30일 오차 검증 상세 대장</h2>
+                <span className="text-xs text-blue-700 bg-blue-50 px-3 py-1 rounded-full font-bold border border-blue-200 shadow-sm">
+                  예측 검증 일수: 30일
+                </span>
+              </div>
+
+              <div className="overflow-x-auto border border-gray-200 rounded-2xl shadow-inner max-h-[400px] overflow-y-auto">
+                <table className="w-full text-xs text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-gray-700 font-black border-b border-gray-200 sticky top-0">
+                      <th className="p-3.5">검증 일자</th>
+                      <th className="p-3.5">실제 누적변위 (m)</th>
+                      <th className="p-3.5 text-orange-700">ARIMA 예측 (m)</th>
+                      <th className="p-3.5 text-orange-600">ARIMA 오차 (m)</th>
+                      <th className="p-3.5 text-purple-700">LSTM 예측 (m)</th>
+                      <th className="p-3.5 text-purple-600">LSTM 오차 (m)</th>
+                      <th className="p-3.5 text-pink-700">Transformer 예측 (m)</th>
+                      <th className="p-3.5 text-pink-600">Transformer 오차 (m)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200 font-bold text-gray-800">
+                    {backtestResults[selectedId].comparison
+                      .filter(d => d.isForecastPeriod)
+                      .map((row, index) => (
+                        <tr key={index} className="hover:bg-slate-50/70 transition-colors">
+                          <td className="p-3.5 text-slate-800">{row.date}</td>
+                          <td className="p-3.5 text-blue-700">{row.actual.toFixed(3)}</td>
+                          <td className="p-3.5 text-orange-655">{row.arima.toFixed(3)}</td>
+                          <td className="p-3.5 text-orange-500">{(row.arima - row.actual).toFixed(3)}</td>
+                          <td className="p-3.5 text-purple-650">{row.lstm.toFixed(3)}</td>
+                          <td className="p-3.5 text-purple-500">{(row.lstm - row.actual).toFixed(3)}</td>
+                          <td className="p-3.5 text-pink-650">{row.transformer.toFixed(3)}</td>
+                          <td className="p-3.5 text-pink-500">{(row.transformer - row.actual).toFixed(3)}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* 5. 계측기별 모델별 오차 및 거동 요인 종합 분석 */}
+            <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 space-y-6">
+              <div className="flex items-center gap-2.5 pb-3 border-b border-gray-200">
+                <span className="w-2.5 h-6 bg-blue-600 rounded-full"></span>
+                <h2 className="text-xl font-black text-gray-955 flex items-center gap-2">
+                  <Info className="w-5 h-5 text-blue-600" />
+                  {instruments[selectedId].displayName} AI 오차 원인 및 수계 거동 종합 분석
+                </h2>
+              </div>
+              
+              <div className="space-y-4 text-xs md:text-sm font-bold text-gray-800">
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl shadow-sm space-y-2">
+                  <span className="text-[10px] font-extrabold text-blue-600 bg-blue-50 px-2.5 py-1 rounded border border-blue-200 tracking-wider">
+                    30일 오차 검증 결과 순위 (MAE 기준)
+                  </span>
+                  <p className="text-sm font-black text-gray-900 mt-1">
+                    {backtestAnalysis[selectedId].rank}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-2">
+                  {/* ARIMA 분석 */}
+                  <div className="bg-orange-50/20 border border-orange-200 rounded-2xl p-5 space-y-2.5 shadow-sm">
+                    <h4 className="text-orange-950 font-black text-sm flex items-center gap-1.5 border-b border-orange-100 pb-2">
+                      <span className="w-2 h-4 bg-orange-500 rounded-full inline-block"></span>
+                      ARIMA 모델 분석
+                    </h4>
+                    <p className="text-xs text-gray-700 leading-relaxed font-semibold pl-1">
+                      {backtestAnalysis[selectedId].arima}
+                    </p>
+                  </div>
+
+                  {/* LSTM 분석 */}
+                  <div className="bg-purple-50/20 border border-purple-200 rounded-2xl p-5 space-y-2.5 shadow-sm">
+                    <h4 className="text-purple-950 font-black text-sm flex items-center gap-1.5 border-b border-purple-100 pb-2">
+                      <span className="w-2 h-4 bg-purple-500 rounded-full inline-block"></span>
+                      LSTM 모델 분석
+                    </h4>
+                    <p className="text-xs text-gray-700 leading-relaxed font-semibold pl-1">
+                      {backtestAnalysis[selectedId].lstm}
+                    </p>
+                  </div>
+
+                  {/* Transformer 분석 */}
+                  <div className="bg-pink-50/20 border border-pink-200 rounded-2xl p-5 space-y-2.5 shadow-sm">
+                    <h4 className="text-pink-950 font-black text-sm flex items-center gap-1.5 border-b border-pink-100 pb-2">
+                      <span className="w-2 h-4 bg-pink-500 rounded-full inline-block"></span>
+                      Transformer 모델 분석
+                    </h4>
+                    <p className="text-xs text-gray-700 leading-relaxed font-semibold pl-1">
+                      {backtestAnalysis[selectedId].transformer}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    )}
+
+  </main>
 
       {/* 하단 푸터 */}
       <footer className="border-t border-gray-200 bg-white py-4 px-6 text-center text-xs text-gray-500">
         <p className="font-semibold">© 2026 월곶-판교 복선전철 제4공구 현장 계측 시스템. (AI Groundwater Level Control Console)</p>
       </footer>
+
+      {/* 6. A4 PDF 인쇄용 보고서 템플릿 영역 (화면에서는 숨겨지며, 인쇄시에만 나타남) */}
+      {backtestResults[selectedId] && (
+        <div className="print-only-report hidden bg-white p-6 text-black font-sans leading-normal">
+          <div className="space-y-4">
+            
+            {/* 보고서 제목 */}
+            <div className="text-center pb-3 border-b border-slate-300 space-y-1.5">
+              <h1 className="text-xl font-black tracking-tight text-black">
+                지하수위 예측 모델 백테스팅 검증 보고서 (30일)
+              </h1>
+              <div className="flex justify-center items-center gap-4 text-[10px] text-gray-600 font-bold">
+                <span>[ 대상 관측공 계측기: {instruments[selectedId].displayName} ]</span>
+                <span className="w-1.5 h-1.5 bg-gray-300 rounded-full"></span>
+                <span>출력 일시: 2026-07-08</span>
+              </div>
+            </div>
+
+            {/* 1. 분석 개요 */}
+            <div className="space-y-1.5">
+              <h3 className="text-xs font-black border-l-3 border-indigo-650 pl-2 text-black">
+                1. 백테스팅 분석 개요
+              </h3>
+              <table className="w-full text-[10px] border-collapse border border-gray-300">
+                <tbody>
+                  <tr>
+                    <td className="border border-gray-300 bg-slate-50 p-2 font-bold w-1/4">대상 계측기</td>
+                    <td className="border border-gray-300 p-2 font-bold w-1/4">{instruments[selectedId].displayName}</td>
+                    <td className="border border-gray-300 bg-slate-50 p-2 font-bold w-1/4">설치 일자</td>
+                    <td className="border border-gray-300 p-2 font-semibold w-1/4">{instruments[selectedId].installDate}</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-gray-300 bg-slate-50 p-2 font-bold">검증 기간</td>
+                    <td className="border border-gray-300 p-2 font-semibold" colSpan="3">
+                      {backtestResults[selectedId].comparison[0]?.date} ~ {backtestResults[selectedId].comparison[backtestResults[selectedId].comparison.length - 1]?.date} (총 60일)
+                      <span className="text-[9px] text-gray-500 font-medium block">※ 데이터 구분: 앞의 30일(인공지능 모델 학습용) + 뒤의 30일(예측 오차 실측대조용)</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="border border-gray-300 bg-slate-50 p-2 font-bold">수리 분석 목적</td>
+                    <td className="border border-gray-300 p-2 font-semibold text-gray-700 leading-relaxed text-[9.5px]" colSpan="3">
+                      본 보고서는 지하 터널 굴착 공정 시 지반 굴착고 하강에 따른 수리동역학적 지하수위 변동을 조기 예측하기 위해 활용 중인 ARIMA(전통 시계열 통계), LSTM(순환신경망), Transformer(어텐션) 모델의 30일 연속 예측 능력을 사전 검증(Backtesting)하고, 모델별 오차 패턴 분석을 통해 안전 계측 관리의 정밀성을 확립하는 것을 목적으로 합니다.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* 2. 모델별 오차 성능 지표 비교 */}
+            <div className="space-y-1.5 pt-1">
+              <h3 className="text-xs font-black border-l-3 border-indigo-650 pl-2 text-black">
+                2. 예측 모델별 오차 검증 결과 (MAE, RMSE, MAPE)
+              </h3>
+              <table className="w-full text-[10px] text-center border-collapse border border-gray-300">
+                <thead>
+                  <tr className="bg-slate-50 font-bold">
+                    <th className="border border-gray-300 p-2 w-1/4">평가 대상 알고리즘</th>
+                    <th className="border border-gray-300 p-2 w-1/4 text-gray-800">MAE (평균 절대 오차)</th>
+                    <th className="border border-gray-300 p-2 w-1/4 text-gray-800">RMSE (평균 제곱근 오차)</th>
+                    <th className="border border-gray-300 p-2 w-1/4 text-gray-800">MAPE (평균 절대 백분율 오차)</th>
+                  </tr>
+                </thead>
+                <tbody className="font-semibold text-slate-800">
+                  <tr>
+                    <td className="border border-gray-300 bg-slate-50/30 p-2 font-bold">ARIMA (선형/통계)</td>
+                    <td className="border border-gray-300 p-2 text-orange-655 font-bold">{backtestResults[selectedId].metrics.arima.mae.toFixed(3)} m</td>
+                    <td className="border border-gray-300 p-2">{backtestResults[selectedId].metrics.arima.rmse.toFixed(3)} m</td>
+                    <td className="border border-gray-300 p-2">{backtestResults[selectedId].metrics.arima.mape.toFixed(2)} %</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-gray-300 bg-slate-50/30 p-2 font-bold">LSTM (순환신경망)</td>
+                    <td className="border border-gray-300 p-2 text-purple-650 font-bold">{backtestResults[selectedId].metrics.lstm.mae.toFixed(3)} m</td>
+                    <td className="border border-gray-300 p-2">{backtestResults[selectedId].metrics.lstm.rmse.toFixed(3)} m</td>
+                    <td className="border border-gray-300 p-2">{backtestResults[selectedId].metrics.lstm.mape.toFixed(2)} %</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-gray-300 bg-slate-50/30 p-2 font-bold">Transformer (어텐션)</td>
+                    <td className="border border-gray-300 p-2 text-pink-650 font-extrabold">{backtestResults[selectedId].metrics.transformer.mae.toFixed(3)} m</td>
+                    <td className="border border-gray-300 p-2">{backtestResults[selectedId].metrics.transformer.rmse.toFixed(3)} m</td>
+                    <td className="border border-gray-300 p-2">{backtestResults[selectedId].metrics.transformer.mape.toFixed(2)} %</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-[9px] font-bold text-slate-700">
+                ⓘ 30일 누적 오차 판정 순위: <span className="underline decoration-blue-500 font-extrabold">{backtestAnalysis[selectedId].rank}</span>
+              </div>
+            </div>
+
+            {/* 3. 모델별 오차 요인 상세 분석 */}
+            <div className="space-y-2.5 pt-1">
+              <h3 className="text-xs font-black border-l-3 border-indigo-650 pl-2 text-black border-b border-gray-250 pb-1">
+                3. AI 예측 모델별 개별 오차 원인 및 거동 분석 의견
+              </h3>
+              
+              <div className="space-y-2.5 text-[9.5px] font-bold text-slate-850">
+                {/* ARIMA */}
+                <div className="border border-orange-200 bg-orange-50/5 p-2.5 rounded-xl space-y-0.5">
+                  <h4 className="font-extrabold text-orange-950 flex items-center gap-1">
+                    <span className="w-1.5 h-2.5 bg-orange-500 rounded-full inline-block"></span>
+                    ARIMA (선형 계량 시계열 모델 분석)
+                  </h4>
+                  <p className="text-gray-700 leading-relaxed font-semibold pl-2.5">
+                    {backtestAnalysis[selectedId].arima}
+                  </p>
+                </div>
+
+                {/* LSTM */}
+                <div className="border border-purple-200 bg-purple-50/5 p-2.5 rounded-xl space-y-0.5">
+                  <h4 className="font-extrabold text-purple-950 flex items-center gap-1">
+                    <span className="w-1.5 h-2.5 bg-purple-500 rounded-full inline-block"></span>
+                    LSTM (시퀀스 메모리 재귀 모델 분석)
+                  </h4>
+                  <p className="text-gray-700 leading-relaxed font-semibold pl-2.5">
+                    {backtestAnalysis[selectedId].lstm}
+                  </p>
+                </div>
+
+                {/* Transformer */}
+                <div className="border border-pink-200 bg-pink-50/5 p-2.5 rounded-xl space-y-0.5">
+                  <h4 className="font-extrabold text-pink-950 flex items-center gap-1">
+                    <span className="w-1.5 h-2.5 bg-pink-500 rounded-full inline-block"></span>
+                    Transformer (Self-Attention 시간 인과 어텐션 모델 분석)
+                  </h4>
+                  <p className="text-gray-700 leading-relaxed font-semibold pl-2.5">
+                    {backtestAnalysis[selectedId].transformer}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* 4. 주요 검증 일자별 오차 요약 대장 (5일 간격) */}
+            <div className="space-y-1.5 pt-1">
+              <h3 className="text-xs font-black border-l-3 border-indigo-650 pl-2 text-black">
+                4. 주요 백테스팅 검증 일자별 수위 요약 대장 (5일 간격)
+              </h3>
+              <table className="w-full text-[9px] text-center border-collapse border border-gray-300">
+                <thead>
+                  <tr className="bg-slate-50 font-bold">
+                    <th className="border border-gray-300 p-1.5">검증 일자</th>
+                    <th className="border border-gray-300 p-1.5">실제 수위 (m)</th>
+                    <th className="border border-gray-300 p-1.5 text-orange-850">ARIMA (m)</th>
+                    <th className="border border-gray-300 p-1.5 text-orange-800">ARIMA 오차 (m)</th>
+                    <th className="border border-gray-300 p-1.5 text-purple-850">LSTM (m)</th>
+                    <th className="border border-gray-300 p-1.5 text-purple-800">LSTM 오차 (m)</th>
+                    <th className="border border-gray-300 p-1.5 text-pink-850">Transformer (m)</th>
+                    <th className="border border-gray-300 p-1.5 text-pink-800">Trans. 오차 (m)</th>
+                  </tr>
+                </thead>
+                <tbody className="font-semibold text-slate-800">
+                  {backtestResults[selectedId].comparison
+                    .filter(d => d.isForecastPeriod)
+                    .filter((_, index) => index % 5 === 0 || index === 29)
+                    .map((row, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50/50">
+                        <td className="border border-gray-300 p-1.5 font-bold">{row.date}</td>
+                        <td className="border border-gray-300 p-1.5 text-blue-700">{row.actual.toFixed(3)}</td>
+                        <td className="border border-gray-300 p-1.5 text-orange-655">{row.arima.toFixed(3)}</td>
+                        <td className="border border-gray-300 p-1.5 text-orange-600">{(row.arima - row.actual).toFixed(3)}</td>
+                        <td className="border border-gray-300 p-1.5 text-purple-650">{row.lstm.toFixed(3)}</td>
+                        <td className="border border-gray-300 p-1.5 text-purple-600">{(row.lstm - row.actual).toFixed(3)}</td>
+                        <td className="border border-gray-300 p-1.5 text-pink-650">{row.transformer.toFixed(3)}</td>
+                        <td className="border border-gray-300 p-1.5 text-pink-600">{(row.transformer - row.actual).toFixed(3)}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }

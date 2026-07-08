@@ -16,3 +16,56 @@ body {
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
+
+/* PDF 인쇄용 A4 규격화 스타일 */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 1.0cm 1.2cm 1.0cm 1.2cm;
+  }
+  
+  body {
+    background-color: #ffffff !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 11pt;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* 화면에 보이던 모바일/데스크탑 대시보드 메인 영역 숨김 */
+  header, footer, main, .no-print {
+    display: none !important;
+  }
+
+  /* 인쇄 전용 보고서 영역 활성화 */
+  .print-only-report {
+    display: block !important;
+    width: 100% !important;
+    padding: 0 !important;
+  }
+
+  /* 강제 페이지 줄바꿈 유틸리티 */
+  .page-break {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+  
+  /* 인쇄 시 잉크 낭비 및 음영 깨짐 방지용 보정 */
+  .print-border {
+    border: 1px solid #cbd5e1 !important;
+  }
+  
+  .print-bg-gray {
+    background-color: #f8fafc !important;
+  }
+}
+
+@media screen {
+  /* 브라우저 화면에서는 인쇄용 보고서 템플릿 숨김 */
+  .print-only-report {
+    display: none !important;
+  }
+}
