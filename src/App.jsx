@@ -36,21 +36,35 @@ function App() {
   const currentInstrument = instruments[selectedId];
   const rawData = currentInstrument.data;
 
-  // groundEL: 지표면(G.L=0)의 E.L 표고. 기준고가 미설정되거나 데이터에 없을 경우 datumLevel(120.85 등) 또는 fallback 120.0m을 기준으로 삼음.
-  const groundEL = currentInstrument.datumLevel || 120.85; 
-
-  // 초기 지하수위(실측 데이터의 첫 번째 행 수위 E.L)
-  const initialWaterLevel = useMemo(() => {
+  // 1. 선택된 관측공의 최대 누적변위를 계산하여 Ratio(스케일 배율) 결정
+  // W-1 같이 변위가 작은 공은 Ratio=10 (좌측 0~-0.5, 우측 0~-5)
+  // 변위가 큰 공은 Ratio=0.25 (좌측 0~-20, 우측 0~-5)
+  const scaleConfig = useMemo(() => {
     const actualRows = rawData.filter(d => !d.isForecast);
-    return actualRows.length > 0 ? actualRows[0].actualWaterLevel : (groundEL - 5.0);
-  }, [rawData, groundEL]);
+    const maxDeltaAbs = Math.max(...actualRows.map(d => Math.abs(d.actualDelta || 0)));
+    
+    // 최대 누적변위가 2.5m 이하인 경우 (소형 스케일 모드 - 캡처 이미지와 동일)
+    if (maxDeltaAbs <= 2.5) {
+      return {
+        ratio: 10,
+        yDomainLeft: [-0.5, 0],
+        yTicksLeft: [0, -0.1, -0.2, -0.3, -0.4, -0.5],
+        yDomainRight: [-5.0, 0],
+        yTicksRight: [0, -1.0, -2.0, -3.0, -4.0, -5.0]
+      };
+    }
+    
+    // 최대 누적변위가 2.5m 초과 대형 공인 경우
+    return {
+      ratio: 0.25,
+      yDomainLeft: [-20.0, 0],
+      yTicksLeft: [0, -4.0, -8.0, -12.0, -16.0, -20.0],
+      yDomainRight: [-5.0, 0],
+      yTicksRight: [0, -1.0, -2.0, -3.0, -4.0, -5.0]
+    };
+  }, [rawData]);
 
-  // 관리기준선 표고 E.L 환산
-  const level1_EL = useMemo(() => initialWaterLevel - currentInstrument.thresholds.deltaInit.level1, [initialWaterLevel, currentInstrument]);
-  const level2_EL = useMemo(() => initialWaterLevel - currentInstrument.thresholds.deltaInit.level2, [initialWaterLevel, currentInstrument]);
-  const level3_EL = useMemo(() => initialWaterLevel - currentInstrument.thresholds.deltaInit.level3, [initialWaterLevel, currentInstrument]);
-
-  // 1. 강수량 및 이동평균(노이즈 필터) 연산된 데이터 생성 (수위표고 E.L 기준 적용)
+  // 2. 강수량 및 이동평균(노이즈 필터) 연산된 데이터 생성 (누적변화량 기준 적용)
   const processedData = useMemo(() => {
     // 실측 데이터의 마지막 인덱스 찾기
     const actualIndices = [];
@@ -60,13 +74,13 @@ function App() {
     const lastActualIdx = actualIndices.length > 0 ? actualIndices[actualIndices.length - 1] : -1;
 
     return rawData.map((d, index, arr) => {
-      // 5일 이동 평균 (지하수위 표고) 필터링
-      let filteredWaterLevel = d.actualWaterLevel;
+      // 5일 이동 평균 (누적변화량) 필터링
+      let filteredDelta = d.actualDelta;
       if (noiseFilter && !d.isForecast) {
         const start = Math.max(0, index - 4);
         const window = arr.slice(start, index + 1).filter(item => !item.isForecast);
-        const sum = window.reduce((acc, item) => acc + item.actualWaterLevel, 0);
-        filteredWaterLevel = window.length > 0 ? sum / window.length : d.actualWaterLevel;
+        const sum = window.reduce((acc, item) => acc + item.actualDelta, 0);
+        filteredDelta = window.length > 0 ? sum / window.length : d.actualDelta;
       }
 
       // 기상 데이터 연동 - 실제 2025년 기상청 일별 서울 강수 통계 매핑 고도화
@@ -92,33 +106,33 @@ function App() {
         }
       }
 
-      // [선 단절 해결] 예측 시작점(실측 마지막 행)의 예측 컬럼에 실측최종 수계고 대입
-      let arimaWaterLevel = d.arimaWaterLevel;
-      let lstmWaterLevel = d.lstmWaterLevel;
-      let transformerWaterLevel = d.transformerWaterLevel;
+      // [선 단절 해결] 예측 시작점(실측 마지막 행)의 예측 컬럼에 실측최종 변위 수치 대입
+      let arimaDelta = d.arimaDelta;
+      let lstmDelta = d.lstmDelta;
+      let transformerDelta = d.transformerDelta;
       
       if (index === lastActualIdx) {
-        const bridgeVal = noiseFilter ? filteredWaterLevel : d.actualWaterLevel;
-        arimaWaterLevel = bridgeVal;
-        lstmWaterLevel = bridgeVal;
-        transformerWaterLevel = bridgeVal;
+        const bridgeVal = noiseFilter ? filteredDelta : d.actualDelta;
+        arimaDelta = bridgeVal;
+        lstmDelta = bridgeVal;
+        transformerDelta = bridgeVal;
       }
 
       return {
         ...d,
-        arimaWaterLevel: arimaWaterLevel !== null ? round(arimaWaterLevel, 3) : null,
-        lstmWaterLevel: lstmWaterLevel !== null ? round(lstmWaterLevel, 3) : null,
-        transformerWaterLevel: transformerWaterLevel !== null ? round(transformerWaterLevel, 3) : null,
-        filteredWaterLevel: filteredWaterLevel !== null ? round(filteredWaterLevel, 3) : null,
-        // 굴착고 GL 값을 좌측 기준 좌표계(E.L)로 변환
-        excavationEL: d.excavationDepth !== null ? round(groundEL + d.excavationDepth, 3) : null,
+        arimaDelta: arimaDelta !== null ? round(arimaDelta, 3) : null,
+        lstmDelta: lstmDelta !== null ? round(lstmDelta, 3) : null,
+        transformerDelta: transformerDelta !== null ? round(transformerDelta, 3) : null,
+        filteredDelta: filteredDelta !== null ? round(filteredDelta, 3) : null,
+        // 굴착고 GL 깊이를 배율에 맞춰 축에 겹쳐 그리도록 조정
+        excavationScaled: d.excavationDepth !== null ? round(d.excavationDepth / scaleConfig.ratio, 3) : null,
         precipitation: weatherImpact ? precipitation : 0,
         temperature: weatherImpact ? temperature : null
       };
     });
-  }, [rawData, weatherImpact, noiseFilter, groundEL]);
+  }, [rawData, weatherImpact, noiseFilter, scaleConfig.ratio]);
 
-  // 2. 기간별 필터링 및 AI 예측 Focus 슬라이싱 적용
+  // 3. 기간별 필터링 및 AI 예측 Focus 슬라이싱 적용
   const filteredData = useMemo(() => {
     if (aiFocusMode) {
       // AI 미래 예측 시작점 5일 구간을 부각하기 위해 최근 15일치 실측 데이터와 미래 5일 예측치만 잘라냄
@@ -141,7 +155,7 @@ function App() {
     return processedData.filter(d => new Date(d.date) >= cutoffDate);
   }, [processedData, filterPeriod, aiFocusMode]);
 
-  // 3. 실시간 안전 등급 진단 로직 (수위표고 E.L 기준 진단)
+  // 4. 실시간 안전 등급 진단 로직 (누적변화량 기준)
   const safetyStatus = useMemo(() => {
     const actualRows = processedData.filter(d => !d.isForecast);
     const lastActual = actualRows[actualRows.length - 1] || {};
@@ -199,39 +213,6 @@ function App() {
     };
   }, [processedData, currentInstrument]);
 
-  // 4. 좌/우 Y축 눈금 및 도메인 동기화용 계산 (공학적 정렬 완료)
-  const { yDomain, yTicks } = useMemo(() => {
-    const allValues = [];
-    filteredData.forEach(d => {
-      if (d.actualWaterLevel !== null) allValues.push(d.actualWaterLevel);
-      if (d.filteredWaterLevel !== null) allValues.push(d.filteredWaterLevel);
-      if (d.arimaWaterLevel !== null) allValues.push(d.arimaWaterLevel);
-      if (d.lstmWaterLevel !== null) allValues.push(d.lstmWaterLevel);
-      if (d.transformerWaterLevel !== null) allValues.push(d.transformerWaterLevel);
-      if (d.excavationEL !== null) allValues.push(d.excavationEL);
-    });
-
-    // 관리기준 임계 수위(EL)도 포함하여 축 범위 자동 안전 마진 확보
-    allValues.push(level1_EL, level2_EL, level3_EL);
-
-    const minVal = Math.min(...allValues);
-    const maxVal = Math.max(...allValues);
-
-    // 5m 단위 격자 눈금화
-    const minRounded = Math.floor((minVal - 2) / 5) * 5;
-    const maxRounded = Math.ceil((maxVal + 2) / 5) * 5;
-
-    const ticks = [];
-    for (let val = minRounded; val <= maxRounded; val += 5) {
-      ticks.push(val);
-    }
-    
-    return {
-      yDomain: [minRounded, maxRounded],
-      yTicks: ticks
-    };
-  }, [filteredData, level1_EL, level2_EL, level3_EL]);
-
   // 5. 테이블 페이징 처리
   const tableData = useMemo(() => {
     return processedData.filter(d => !d.isForecast).reverse();
@@ -266,7 +247,7 @@ function App() {
         <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 mb-3.5 text-xs font-bold text-gray-800">
           <span className="flex items-center gap-2 text-blue-700">
             <span className="w-5 h-1 bg-blue-600 rounded inline-block"></span>
-            {noiseFilter ? "실제 지하수위 (이동평균 EL)" : "실제 지하수위 (실측 EL)"}
+            {noiseFilter ? "실제 누적변위 (이동평균)" : "실제 누적변위 (실측)"}
           </span>
           
           <span className="flex items-center gap-2 text-orange-655">
@@ -305,7 +286,7 @@ function App() {
             title="1차 관심 관리기준선 표시 토글"
           >
             <span className="w-3.5 h-0.5 border-t-2 border-dashed border-yellow-600 inline-block"></span>
-            1차 기준 (EL {level1_EL.toFixed(1)}m) {showLevel1 ? 'ON' : 'OFF'}
+            1차 기준 ({-currentInstrument.thresholds.deltaInit.level1}m) {showLevel1 ? 'ON' : 'OFF'}
           </button>
 
           {/* 2차 관리기준 토글 */}
@@ -319,7 +300,7 @@ function App() {
             title="2차 주의 관리기준선 표시 토글"
           >
             <span className="w-3.5 h-0.5 border-t-2 border-dashed border-orange-600 inline-block"></span>
-            2차 기준 (EL {level2_EL.toFixed(1)}m) {showLevel2 ? 'ON' : 'OFF'}
+            2차 기준 ({-currentInstrument.thresholds.deltaInit.level2}m) {showLevel2 ? 'ON' : 'OFF'}
           </button>
 
           {/* 3차 관리기준 토글 */}
@@ -332,8 +313,8 @@ function App() {
             }`}
             title="3차 경계 관리기준선 표시 토글"
           >
-            <span className="w-3.5 h-0.5 border-t-2 border-dashed border-red-650 inline-block"></span>
-            3차 기준 (EL {level3_EL.toFixed(1)}m) {showLevel3 ? 'ON' : 'OFF'}
+            <span className="w-3.5 h-0.5 border-t-2 border-dashed border-red-655 inline-block"></span>
+            3차 기준 ({-currentInstrument.thresholds.deltaInit.level3}m) {showLevel3 ? 'ON' : 'OFF'}
           </button>
         </div>
 
@@ -460,7 +441,7 @@ function App() {
 
             {/* 안전관리기준 임계치 리디자인 */}
             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
-              <h3 className="text-xs font-black text-slate-850 tracking-wider uppercase border-b border-slate-200 pb-1.5">안전 관리 기준 대비 현황</h3>
+              <h3 className="text-xs font-black text-slate-855 tracking-wider uppercase border-b border-slate-200 pb-1.5">안전 관리 기준 대비 현황</h3>
               
               <div className="space-y-4">
                 {/* 1. 누적변화량 상태 바 */}
@@ -562,22 +543,22 @@ function App() {
           {/* 이상 경보 문구 */}
           {safetyStatus.level !== '안전' && (
             <div className="p-4.5 rounded-xl bg-red-50 border-2 border-red-200 flex items-center gap-3.5 text-xs leading-relaxed text-red-900 shadow-sm">
-              <AlertTriangle className="w-6 h-6 shrink-0 text-red-650 animate-bounce" />
+              <AlertTriangle className="w-6 h-6 shrink-0 text-red-655 animate-bounce" />
               <p className="font-bold">{safetyStatus.desc}</p>
             </div>
           )}
         </section>
 
-        {/* 4. 시계열 지하수위 추이 차트 (수계고 E.L 기준 정렬 및 짤림 방지 45px 마진 적용) */}
+        {/* 4. 시계열 변위 추이 차트 (누적변화량-굴착고 1:10 비율 칼각 정렬 완료) */}
         <section className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
               <h3 className="text-lg font-black text-gray-900 flex items-center gap-2">
                 <Activity className="w-5 h-5 text-blue-600 animate-pulse" />
-                시계열 지하수위 추이 (수위표고 E.L & 굴착 깊이)
+                시계열 변위 추이 (지하수위 누적변화량 & 굴착고)
               </h3>
               <p className="text-xs text-gray-600 font-medium mt-0.5">
-                지하수위(EL.m)의 절대 고도 상에 굴착고를 동일 투영하여 공학적으로 직접 정밀 비교합니다.
+                지하수위 누적변화량(m)과 우측 굴착고(GL-m)를 동일한 가로 격자선상에서 대칭 정렬하여 관제합니다.
               </p>
             </div>
 
@@ -624,24 +605,21 @@ function App() {
             </div>
           </div>
 
-          {/* 차트 상단 양 끝 가로형 축 라벨 고정 배치 (수위표고 EL 기준으로 명칭 최적화) */}
+          {/* 차트 상단 양 끝 가로형 축 라벨 고정 배치 (오른쪽 padding과 수평 매칭) */}
           <div className="flex justify-between items-center text-xs font-black text-gray-800 px-3.5 pt-2">
-            <span className="flex items-center gap-1.5 animate-pulse">
+            <span className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 bg-blue-650 rounded-full inline-block"></span>
-              지하수위 표고 (E.L. m)
-            </span>
-            <span className="text-[10px] text-gray-500 font-extrabold italic bg-gray-50 px-2 py-0.5 rounded border border-gray-200">
-              * 기준고(E.L. {groundEL.toFixed(2)}m) 미설정 시 우측 GL축 환산 불가
+              누적변화량 (m)
             </span>
             <span className="flex items-center gap-1.5 text-right pr-6">
-              현장 굴착고 (G.L. -m)
+              현장 굴착고 (GL-m)
               <span className="w-2.5 h-2.5 bg-sky-655 rounded-full inline-block"></span>
             </span>
           </div>
 
           <div className="w-full h-[420px] bg-slate-50/50 p-2.5 rounded-2xl border border-gray-100">
             <ResponsiveContainer width="100%" height="100%">
-              {/* margin.right를 45로 주어 우측 GL 수치 글자 짤림 방지 */}
+              {/* margin.right를 45로 주어 Y축 수치 숫자가 오른쪽 화면 밖으로 밀려 짤리는 버그 완벽 수정 */}
               <ComposedChart data={filteredData} margin={{ top: 25, right: 45, left: 15, bottom: 15 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
                 <XAxis 
@@ -653,19 +631,19 @@ function App() {
                   minTickGap={60}
                 />
                 
-                {/* 좌측 Y축: 지하수위 표고(E.L. m) - 도메인 및 틱 정렬 결합 */}
+                {/* 좌측 Y축: 누적변화량(m) - 스케일 배율에 맞게 1:1 대응하여 Ticks/Domain 적용 */}
                 <YAxis 
                   yAxisId="left" 
                   stroke="rgba(0,0,0,0.6)" 
                   fontSize={11} 
                   fontWeight="bold"
                   tickLine={true}
-                  domain={yDomain}
-                  ticks={yTicks}
-                  tickFormatter={(v) => Number(v).toFixed(1) + 'm'}
+                  domain={scaleConfig.yDomainLeft}
+                  ticks={scaleConfig.yTicksLeft}
+                  tickFormatter={(v) => Number(v).toFixed(2) + 'm'}
                 />
 
-                {/* 우측 Y축: 굴착 깊이(G.L. -m) - 좌측축과 동기화(domain/ticks 공유) 후 label만 환산 렌더링 */}
+                {/* 우측 Y축: 굴착 깊이(m) - 좌측 틱의 10배 혹은 0.25배로 대칭 정렬하여 ticks 환산 표출 */}
                 <YAxis 
                   yAxisId="right" 
                   orientation="right" 
@@ -673,9 +651,9 @@ function App() {
                   fontSize={11} 
                   fontWeight="bold"
                   tickLine={true}
-                  domain={yDomain}
-                  ticks={yTicks}
-                  tickFormatter={(el) => `${(el - groundEL).toFixed(1)}m`}
+                  domain={scaleConfig.yDomainRight}
+                  ticks={scaleConfig.yTicksRight}
+                  tickFormatter={(v) => Number(v).toFixed(1) + 'm'}
                 />
 
                 {/* 강수량 전용 독립 Y축 */}
@@ -699,24 +677,21 @@ function App() {
                           <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
                             <span className="text-gray-500 font-medium">굴착고 (GL):</span>
                             <span className="text-sky-700 text-right font-black">{data.excavationDepth.toFixed(3)} m</span>
-                            <span className="text-gray-500 font-medium">굴착고 표고(EL):</span>
-                            <span className="text-sky-850 text-right font-black">{data.excavationEL.toFixed(3)} m</span>
-                            
                             {!data.isForecast ? (
                               <>
-                                <span className="text-gray-500 font-medium">실제 지하수위(EL):</span>
-                                <span className="text-blue-600 text-right font-black">{data.actualWaterLevel.toFixed(3)} m</span>
-                                <span className="text-gray-500 font-medium">누적 변화량:</span>
-                                <span className="text-blue-550 text-right font-black">{data.actualDelta.toFixed(3)} m</span>
+                                <span className="text-gray-500 font-medium">실제 누적변위:</span>
+                                <span className="text-blue-600 text-right font-black">{data.actualDelta.toFixed(3)} m</span>
+                                <span className="text-gray-500 font-medium">지하수위(EL):</span>
+                                <span className="text-teal-600 text-right font-black">{data.actualWaterLevel.toFixed(3)} m</span>
                               </>
                             ) : (
                               <>
-                                <span className="text-orange-500 font-medium">ARIMA 수계고(EL):</span>
-                                <span className="text-orange-655 text-right font-black">{data.arimaWaterLevel.toFixed(3)} m</span>
-                                <span className="text-purple-500 font-medium">LSTM 수계고(EL):</span>
-                                <span className="text-purple-650 text-right font-black">{data.lstmWaterLevel.toFixed(3)} m</span>
-                                <span className="text-pink-500 font-medium">Transformer(EL):</span>
-                                <span className="text-pink-655 text-right font-black">{data.transformerWaterLevel.toFixed(3)} m</span>
+                                <span className="text-orange-500 font-medium">ARIMA 변위:</span>
+                                <span className="text-orange-600 text-right font-black">{data.arimaDelta.toFixed(3)} m</span>
+                                <span className="text-purple-500 font-medium">LSTM 변위:</span>
+                                <span className="text-purple-650 text-right font-black">{data.lstmDelta.toFixed(3)} m</span>
+                                <span className="text-pink-500 font-medium">Transformer:</span>
+                                <span className="text-pink-650 text-right font-black">{data.transformerDelta.toFixed(3)} m</span>
                               </>
                             )}
                             {weatherImpact && data.precipitation > 0 && (
@@ -745,11 +720,11 @@ function App() {
                   />
                 )}
 
-                {/* 1, 2, 3차 관리기준 수평 점선 표시 (수위 표고 기준으로 동적 표시) */}
+                {/* 관리기준 수평 임계선 (yAxisId="left" 누적변화량 기본축 대응) */}
                 {showLevel1 && (
                   <ReferenceLine 
                     yAxisId="left" 
-                    y={level1_EL} 
+                    y={-currentInstrument.thresholds.deltaInit.level1} 
                     stroke="#d97706" 
                     strokeDasharray="4 4" 
                     strokeWidth={2}
@@ -758,7 +733,7 @@ function App() {
                 {showLevel2 && (
                   <ReferenceLine 
                     yAxisId="left" 
-                    y={level2_EL} 
+                    y={-currentInstrument.thresholds.deltaInit.level2} 
                     stroke="#ea580c" 
                     strokeDasharray="5 4" 
                     strokeWidth={2.2}
@@ -767,7 +742,7 @@ function App() {
                 {showLevel3 && (
                   <ReferenceLine 
                     yAxisId="left" 
-                    y={level3_EL} 
+                    y={-currentInstrument.thresholds.deltaInit.level3} 
                     stroke="#ef4444" 
                     strokeDasharray="5 3" 
                     strokeWidth={2.5}
@@ -785,12 +760,12 @@ function App() {
                   />
                 )}
 
-                {/* 굴착고 그래프 선 (오른쪽 yAxisId가 아니라 좌측 yAxisId="left"에 직접 투영해 동일 스케일 비교) */}
+                {/* 굴착고 그래프 선 (좌측 yAxisId="left" 좌표계에 비례 변환 주입하여 겹쳐 그리기 구현) */}
                 {showExcavation && (
                   <Line 
                     yAxisId="left" 
                     type="monotone" 
-                    dataKey="excavationEL" 
+                    dataKey="excavationScaled" 
                     stroke="#0284c7" 
                     strokeWidth={2.5} 
                     strokeDasharray="5 5"
@@ -803,12 +778,12 @@ function App() {
                 <Line 
                   yAxisId="left" 
                   type="monotone" 
-                  dataKey={noiseFilter ? "filteredWaterLevel" : "actualWaterLevel"} 
+                  dataKey={noiseFilter ? "filteredDelta" : "actualDelta"} 
                   stroke="#2563eb" 
                   strokeWidth={4} 
                   dot={{ r: 2 }}
                   activeDot={{ r: 6 }}
-                  name={noiseFilter ? "실제 지하수위 (이동평균)" : "실제 지하수위"}
+                  name={noiseFilter ? "실제 누적변위 (이동평균)" : "실제 누적변위"}
                   connectNulls
                 />
 
@@ -816,7 +791,7 @@ function App() {
                 <Line 
                   yAxisId="left" 
                   type="monotone" 
-                  dataKey="arimaWaterLevel" 
+                  dataKey="arimaDelta" 
                   stroke="#f97316" 
                   strokeWidth={3} 
                   strokeDasharray="5 4"
@@ -829,7 +804,7 @@ function App() {
                 <Line 
                   yAxisId="left" 
                   type="monotone" 
-                  dataKey="lstmWaterLevel" 
+                  dataKey="lstmDelta" 
                   stroke="#8b5cf6" 
                   strokeWidth={3} 
                   strokeDasharray="9 3"
@@ -842,7 +817,7 @@ function App() {
                 <Line 
                   yAxisId="left" 
                   type="monotone" 
-                  dataKey="transformerWaterLevel" 
+                  dataKey="transformerDelta" 
                   stroke="#ec4899" 
                   strokeWidth={4} 
                   dot={{ r: 5, fill: "#ec4899", strokeWidth: 1 }}
@@ -1053,7 +1028,7 @@ function App() {
               
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8 text-xs md:text-sm leading-relaxed font-bold">
                 <div className="space-y-2.5">
-                  <h4 className="text-sm md:text-base text-orange-950 font-black flex items-center gap-1.5">
+                  <h4 className="text-sm md:text-base text-orange-955 font-black flex items-center gap-1.5">
                     <span className="w-2 h-4 bg-orange-500 rounded-full inline-block"></span>
                     알고리즘 개요 (쉽고 직관적인 정의)
                   </h4>
@@ -1063,12 +1038,12 @@ function App() {
                 </div>
                 
                 <div className="space-y-2.5">
-                  <h4 className="text-sm md:text-base text-orange-950 font-black flex items-center gap-1.5">
+                  <h4 className="text-sm md:text-base text-orange-955 font-black flex items-center gap-1.5">
                     <span className="w-2 h-4 bg-orange-500 rounded-full inline-block"></span>
                     지하수위계 표현 방식 (대시보드 반영법)
                   </h4>
                   <p className="text-gray-700 pl-3">
-                    차트상에서 실측 데이터 최종 계측일(파란선 끝)의 지하수위 표고(E.L) 수치에서 출발하여, 과거 수계의 누적 평균 변동 속도에 맞춰 매끄러운 단일 **주황색 점선(----)** 곡선 형태로 미래 5일의 변화를 자연스럽게 연장 표시하여 장기 추세 변동을 도출합니다.
+                    차트상에서 실측 데이터 최종 계측일(파란선 끝)의 지하수위 누적변화량(m) 수치에서 출발하여, 과거 수계의 누적 평균 변동 속도에 맞춰 매끄러운 단일 **주황색 점선(----)** 곡선 형태로 미래 5일의 변화를 자연스럽게 연장 표시하여 장기 추세 변동을 도출합니다.
                   </p>
                 </div>
               </div>
@@ -1086,7 +1061,7 @@ function App() {
                 </div>
 
                 <div className="space-y-2.5">
-                  <h4 className="text-sm md:text-base text-orange-950 font-black flex items-center gap-1.5">
+                  <h4 className="text-sm md:text-base text-orange-955 font-black flex items-center gap-1.5">
                     <span className="w-2 h-4 bg-orange-500 rounded-full inline-block"></span>
                     고도화 설계 방안 (현장 고도화)
                   </h4>
