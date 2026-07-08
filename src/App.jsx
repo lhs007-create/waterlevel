@@ -254,7 +254,7 @@ function App() {
             onClick={() => setShowLevel1(!showLevel1)}
             className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 border shadow-sm ${
               showLevel1 
-                ? 'bg-yellow-50 border-yellow-350 text-yellow-800 font-extrabold' 
+                ? 'bg-yellow-50 border-yellow-355 text-yellow-800 font-extrabold' 
                 : 'bg-white border-gray-200 text-gray-400 hover:text-gray-650'
             }`}
             title="1차 관심 관리기준선 표시 토글"
@@ -523,7 +523,7 @@ function App() {
           )}
         </section>
 
-        {/* 4. 시계열 변위 추이 차트 */}
+        {/* 4. 시계열 변위 추이 차트 (오른쪽 마진 45px로 늘려 굴착고 축 짤림 완벽 디버깅) */}
         <section className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
@@ -579,21 +579,22 @@ function App() {
             </div>
           </div>
 
-          {/* 차트 상단 양 끝 가로형 축 라벨 신설 배치 (수평 고정 렌더링으로 겹침 완전 제거) */}
+          {/* 차트 상단 양 끝 가로형 축 라벨 고정 배치 (오른쪽 padding과 수평 매칭) */}
           <div className="flex justify-between items-center text-xs font-black text-gray-800 px-3.5 pt-2">
             <span className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 bg-blue-650 rounded-full inline-block"></span>
               누적변화량 (m)
             </span>
-            <span className="flex items-center gap-1.5 text-right">
+            <span className="flex items-center gap-1.5 text-right pr-6">
               현장 굴착고 (GL-m)
-              <span className="w-2.5 h-2.5 bg-sky-600 rounded-full inline-block"></span>
+              <span className="w-2.5 h-2.5 bg-sky-650 rounded-full inline-block"></span>
             </span>
           </div>
 
           <div className="w-full h-[420px] bg-slate-50/50 p-2.5 rounded-2xl border border-gray-100">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={filteredData} margin={{ top: 25, right: 15, left: 15, bottom: 15 }}>
+              {/* margin.right를 45로 주어 Y축 수치 숫자가 오른쪽 화면 밖으로 밀려 짤리는 버그 완벽 수정 */}
+              <ComposedChart data={filteredData} margin={{ top: 25, right: 45, left: 15, bottom: 15 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
                 <XAxis 
                   dataKey="date" 
@@ -629,7 +630,7 @@ function App() {
                   tickFormatter={(v) => Number(v).toFixed(1) + 'm'}
                 />
 
-                {/* 강수량 전용 독립 Y축 (굴착고 찌부러짐 차단용 보이지 않는 축) */}
+                {/* 강수량 전용 독립 Y축 */}
                 <YAxis 
                   yAxisId="rain"
                   orientation="right"
@@ -662,7 +663,7 @@ function App() {
                                 <span className="text-orange-500 font-medium">ARIMA 변위:</span>
                                 <span className="text-orange-600 text-right font-black">{data.arimaDelta.toFixed(3)} m</span>
                                 <span className="text-purple-500 font-medium">LSTM 변위:</span>
-                                <span className="text-purple-600 text-right font-black">{data.lstmDelta.toFixed(3)} m</span>
+                                <span className="text-purple-650 text-right font-black">{data.lstmDelta.toFixed(3)} m</span>
                                 <span className="text-pink-500 font-medium">Transformer:</span>
                                 <span className="text-pink-650 text-right font-black">{data.transformerDelta.toFixed(3)} m</span>
                               </>
@@ -693,7 +694,7 @@ function App() {
                   />
                 )}
 
-                {/* 관리기준 수평 임계선 (개별 토글 적용, 텍스트 라벨 제거) */}
+                {/* 관리기준 수평 임계선 */}
                 {showLevel1 && (
                   <ReferenceLine 
                     yAxisId="left" 
@@ -819,7 +820,8 @@ function App() {
 
           <div className="w-full h-[260px] bg-slate-50/50 p-2.5 rounded-2xl border border-gray-100">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={filteredData} margin={{ top: 15, right: 15, left: 15, bottom: 5 }}>
+              {/* 하부 일간변위 차트도 우측 마진을 45로 통일하여 세로 격자 라인을 맞춤 */}
+              <ComposedChart data={filteredData} margin={{ top: 15, right: 45, left: 15, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.04)" />
                 <XAxis 
                   dataKey="date" 
@@ -1148,7 +1150,7 @@ function App() {
                     고도화 설계 방안 (현장 고도화)
                   </h4>
                   <p className="text-gray-700 pl-3">
-                    토양의 투수계수와 기상청의 주간 중기 날씨예보 시나리오를 Attention 디코더에 결합하는 <strong>Temporal Fusion Transformer (TFT)</strong>로 고도화하여, 현장의 물리 토질 역학 속성을 딥러닝이 반영하게 만듦으로써 과적합 우려를 원천 차단합니다.
+                    열의 투수계수와 기상청의 주간 중기 날씨예보 시나리오를 Attention 디코더에 결합하는 <strong>Temporal Fusion Transformer (TFT)</strong>로 고도화하여, 현장의 물리 토질 역학 속성을 딥러닝이 반영하게 만듦으로써 과적합 우려를 원천 차단합니다.
                   </p>
                 </div>
               </div>
