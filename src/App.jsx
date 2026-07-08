@@ -68,6 +68,16 @@ function App() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 12;
 
+  // PDF 인쇄 시 브라우저 기본 타이틀을 임시 제거하는 핸들러
+  const handlePrint = () => {
+    const originalTitle = document.title;
+    document.title = ""; // 브라우저 헤더의 타이틀 텍스트 지우기
+    window.print();
+    setTimeout(() => {
+      document.title = originalTitle; // 인쇄 대화상자 호출 즉시 탭 타이틀 복구
+    }, 100);
+  };
+
   const currentInstrument = instruments[selectedId];
   const rawData = currentInstrument.data;
 
@@ -1286,7 +1296,7 @@ function App() {
               </div>
               <div className="flex flex-wrap items-center gap-3 shrink-0">
                 <button
-                  onClick={() => window.print()}
+                  onClick={handlePrint}
                   className="px-4 py-2.5 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-700 hover:border-emerald-800 shadow-md shadow-emerald-500/20 cursor-pointer flex items-center gap-1.5 transition-all active:scale-95"
                 >
                   <Download className="w-4 h-4" />
@@ -1610,7 +1620,7 @@ function App() {
             {/* 보고서 제목 */}
             <div className="text-center pb-3 border-b border-slate-300 space-y-1.5">
               <h1 className="text-xl font-black tracking-tight text-black">
-                지하수위 예측 모델 백테스팅 검증 보고서 (30일)
+                AI기반 지하수위 {instruments[selectedId].displayName} 계측 결과 검증 결과 보고서
               </h1>
               <div className="flex justify-center items-center gap-4 text-[10px] text-gray-600 font-bold">
                 <span>[ 대상 관측공 계측기: {instruments[selectedId].displayName} ]</span>
