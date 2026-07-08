@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { groundwaterData } from './data/groundwaterData';
 import { 
   ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis, 
-  CartesianGrid, Tooltip, Legend, ReferenceLine, Label 
+  CartesianGrid, Tooltip, Legend, ReferenceLine
 } from 'recharts';
 import { 
   Activity, AlertTriangle, CheckCircle, Database, HelpCircle, 
@@ -21,11 +21,11 @@ function App() {
   const [weatherImpact, setWeatherImpact] = useState(false); // 기상 데이터 연동 여부
   const [noiseFilter, setNoiseFilter] = useState(false); // 노이즈 필터링 여부
   
-  // [신설 차트 제어 설정]
+  // [차트 제어 설정]
   const [showExcavation, setShowExcavation] = useState(true); // 굴착 깊이선 표시 여부
   const [aiFocusMode, setAiFocusMode] = useState(false); // AI 돋보기 뷰 모드 여부
   
-  // [개별 관리기준선 토글 상태 추가]
+  // [개별 관리기준선 토글 상태]
   const [showLevel1, setShowLevel1] = useState(true);
   const [showLevel2, setShowLevel2] = useState(true);
   const [showLevel3, setShowLevel3] = useState(true);
@@ -212,87 +212,86 @@ function App() {
     return Math.round(val * Math.pow(10, precision)) / Math.pow(10, precision);
   }
 
-  // 5. 커스텀 범례 렌더러 (하단 범례에서 수평 기준선 개별 토글 제어)
+  // 5. 커스텀 범례 렌더러 (2단 수직 분할 및 수평 일렬 정렬 완벽 구현)
   const renderCustomLegend = (props) => {
-    const { payload } = props;
     return (
-      <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-3.5 pt-4.5 border-t border-gray-200 text-xs font-bold text-gray-800">
-        {/* 실제 수위 */}
-        <span className="flex items-center gap-2 text-blue-700">
-          <span className="w-5 h-1 bg-blue-600 rounded inline-block"></span>
-          {noiseFilter ? "실제 누적변위 (이동평균)" : "실제 누적변위 (실측)"}
-        </span>
+      <div className="pt-4.5 border-t border-gray-250 w-full flex flex-col items-center">
         
-        {/* ARIMA */}
-        <span className="flex items-center gap-2 text-orange-600">
-          <span className="flex items-center font-mono font-bold tracking-tighter text-orange-500">----</span>
-          ARIMA 예측 (5일)
-        </span>
-        
-        {/* LSTM */}
-        <span className="flex items-center gap-2 text-purple-600">
-          <span className="flex items-center font-mono font-bold tracking-widest text-purple-500">- - -</span>
-          LSTM 예측 (5일)
-        </span>
-        
-        {/* Transformer */}
-        <span className="flex items-center gap-2 text-pink-600">
-          <span className="w-5 h-1.5 bg-pink-500 rounded inline-block"></span>
-          Transformer 예측 (5일)
-        </span>
-
-        {/* 굴착고 */}
-        {showExcavation && (
-          <span className="flex items-center gap-2 text-sky-700">
-            <span className="flex items-center font-mono text-[10px] font-bold text-sky-500 tracking-tighter">- - - -</span>
-            현장 굴착 깊이 (G.L)
+        {/* 1층: 누적변위, ARIMA, LSTM, Transformer, 굴착고 기호 범례 수평 배치 */}
+        <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 mb-3.5 text-xs font-bold text-gray-800">
+          <span className="flex items-center gap-2 text-blue-700">
+            <span className="w-5 h-1 bg-blue-600 rounded inline-block"></span>
+            {noiseFilter ? "실제 누적변위 (이동평균)" : "실제 누적변위 (실측)"}
           </span>
-        )}
+          
+          <span className="flex items-center gap-2 text-orange-655">
+            <span className="flex items-center font-mono font-black tracking-tighter text-orange-500">----</span>
+            ARIMA 예측 (5일)
+          </span>
+          
+          <span className="flex items-center gap-2 text-purple-650">
+            <span className="flex items-center font-mono font-bold tracking-widest text-purple-500">- - -</span>
+            LSTM 예측 (5일)
+          </span>
+          
+          <span className="flex items-center gap-2 text-pink-650">
+            <span className="w-5 h-1.5 bg-pink-500 rounded inline-block"></span>
+            Transformer 예측 (5일)
+          </span>
 
-        {/* 수직 구분 기둥 */}
-        <span className="w-px h-3.5 bg-gray-300"></span>
+          {showExcavation && (
+            <span className="flex items-center gap-2 text-sky-700">
+              <span className="flex items-center font-mono text-[10px] font-bold text-sky-500 tracking-tighter">- - - -</span>
+              현장 굴착 깊이 (G.L)
+            </span>
+          )}
+        </div>
 
-        {/* 1차 관리기준 개별 토글 */}
-        <button
-          onClick={() => setShowLevel1(!showLevel1)}
-          className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 border shadow-sm ${
-            showLevel1 
-              ? 'bg-yellow-50 border-yellow-350 text-yellow-800 font-extrabold' 
-              : 'bg-white border-gray-200 text-gray-400 hover:text-gray-650'
-          }`}
-          title="1차 관심 관리기준선 표시 토글"
-        >
-          <span className="w-3.5 h-0.5 border-t-2 border-dashed border-yellow-600 inline-block"></span>
-          1차 기준(1.59m) {showLevel1 ? 'ON' : 'OFF'}
-        </button>
+        {/* 2층: 1차, 2차, 3차 기준선 토글 버튼들을 단독 가로 일렬 정렬 배치 */}
+        <div className="flex items-center justify-center gap-x-5.5 pt-3.5 border-t border-dashed border-gray-200 text-xs font-extrabold w-full">
+          {/* 1차 관리기준 토글 */}
+          <button
+            onClick={() => setShowLevel1(!showLevel1)}
+            className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 border shadow-sm ${
+              showLevel1 
+                ? 'bg-yellow-50 border-yellow-350 text-yellow-800 font-extrabold' 
+                : 'bg-white border-gray-200 text-gray-400 hover:text-gray-650'
+            }`}
+            title="1차 관심 관리기준선 표시 토글"
+          >
+            <span className="w-3.5 h-0.5 border-t-2 border-dashed border-yellow-600 inline-block"></span>
+            1차 기준 (1.59m) {showLevel1 ? 'ON' : 'OFF'}
+          </button>
 
-        {/* 2차 관리기준 개별 토글 */}
-        <button
-          onClick={() => setShowLevel2(!showLevel2)}
-          className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 border shadow-sm ${
-            showLevel2 
-              ? 'bg-orange-50 border-orange-355 text-orange-800 font-extrabold' 
-              : 'bg-white border-gray-200 text-gray-400 hover:text-gray-650'
-          }`}
-          title="2차 주의 관리기준선 표시 토글"
-        >
-          <span className="w-3.5 h-0.5 border-t-2 border-dashed border-orange-600 inline-block"></span>
-          2차 기준(1.99m) {showLevel2 ? 'ON' : 'OFF'}
-        </button>
+          {/* 2차 관리기준 토글 */}
+          <button
+            onClick={() => setShowLevel2(!showLevel2)}
+            className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 border shadow-sm ${
+              showLevel2 
+                ? 'bg-orange-50 border-orange-355 text-orange-800 font-extrabold' 
+                : 'bg-white border-gray-200 text-gray-400 hover:text-gray-650'
+            }`}
+            title="2차 주의 관리기준선 표시 토글"
+          >
+            <span className="w-3.5 h-0.5 border-t-2 border-dashed border-orange-600 inline-block"></span>
+            2차 기준 (1.99m) {showLevel2 ? 'ON' : 'OFF'}
+          </button>
 
-        {/* 3차 관리기준 개별 토글 */}
-        <button
-          onClick={() => setShowLevel3(!showLevel3)}
-          className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 border shadow-sm ${
-            showLevel3 
-              ? 'bg-red-50 border-red-350 text-red-800 font-extrabold' 
-              : 'bg-white border-gray-200 text-gray-400 hover:text-gray-650'
-          }`}
-          title="3차 경계 관리기준선 표시 토글"
-        >
-          <span className="w-3.5 h-0.5 border-t-2 border-dashed border-red-650 inline-block"></span>
-          3차 기준(2.39m) {showLevel3 ? 'ON' : 'OFF'}
-        </button>
+          {/* 3차 관리기준 토글 */}
+          <button
+            onClick={() => setShowLevel3(!showLevel3)}
+            className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 border shadow-sm ${
+              showLevel3 
+                ? 'bg-red-50 border-red-350 text-red-800 font-extrabold' 
+                : 'bg-white border-gray-200 text-gray-400 hover:text-gray-650'
+            }`}
+            title="3차 경계 관리기준선 표시 토글"
+          >
+            <span className="w-3.5 h-0.5 border-t-2 border-dashed border-red-650 inline-block"></span>
+            3차 기준 (2.39m) {showLevel3 ? 'ON' : 'OFF'}
+          </button>
+        </div>
+
       </div>
     );
   };
@@ -300,7 +299,7 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col font-sans antialiased">
       
-      {/* 1. 상단 관제실 밝은 테마 헤더 */}
+      {/* 1. 상단 헤더 */}
       <header className="border-b border-gray-200 bg-white px-6 py-4 shadow-sm">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -324,7 +323,7 @@ function App() {
           </div>
           
           <div className="flex items-center gap-3">
-            {/* 고도화 토글 제어 영역 */}
+            {/* 고도화 토글 제어 */}
             <div className="flex items-center gap-2.5 text-xs bg-gray-100 p-1.5 rounded-xl border border-gray-300 shadow-inner">
               <button 
                 onClick={() => setWeatherImpact(!weatherImpact)}
@@ -388,7 +387,7 @@ function App() {
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             
-            {/* 왼쪽: 기본 속성 카드 */}
+            {/* 기본 속성 카드 */}
             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
               <h3 className="text-xs font-black text-slate-800 tracking-wider uppercase border-b border-slate-200 pb-1.5">기본 설비 속성</h3>
               <div className="grid grid-cols-2 gap-y-3.5 text-xs font-semibold text-gray-800">
@@ -414,7 +413,7 @@ function App() {
               </div>
             </div>
 
-            {/* 중간: 안전관리기준 임계치 리디자인 */}
+            {/* 안전관리기준 임계치 리디자인 */}
             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
               <h3 className="text-xs font-black text-slate-850 tracking-wider uppercase border-b border-slate-200 pb-1.5">안전 관리 기준 대비 현황</h3>
               
@@ -485,7 +484,7 @@ function App() {
               </div>
             </div>
 
-            {/* 오른쪽: BM 참고 정보 및 실시간 안전 진단 */}
+            {/* BM 참고 정보 및 실시간 안전 진단 */}
             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 flex flex-col justify-between space-y-4">
               <div className="space-y-3">
                 <h3 className="text-xs font-black text-slate-800 tracking-wider uppercase border-b border-slate-200 pb-1.5">참고 사항 및 수직 기준</h3>
@@ -497,7 +496,7 @@ function App() {
                   <p className="text-sm font-bold text-blue-700 pl-4">
                     {currentInstrument.bmInfo}
                   </p>
-                  <p className="text-[10px] text-gray-650 pl-4 leading-relaxed font-semibold">
+                  <p className="text-[10px] text-gray-655 pl-4 leading-relaxed font-semibold">
                     관상단 수평 계측고 결정을 위해 지정된 국가 및 현장 수준점 기준값 정보입니다.
                   </p>
                 </div>
@@ -515,7 +514,7 @@ function App() {
 
           </div>
 
-          {/* 이상 경보 문구 상단 표출 */}
+          {/* 이상 경보 문구 */}
           {safetyStatus.level !== '안전' && (
             <div className="p-4.5 rounded-xl bg-red-50 border-2 border-red-200 flex items-center gap-3.5 text-xs leading-relaxed text-red-900 shadow-sm">
               <AlertTriangle className="w-6 h-6 shrink-0 text-red-650 animate-bounce" />
@@ -524,7 +523,7 @@ function App() {
           )}
         </section>
 
-        {/* 4. 시계열 변위 추이 차트 (가로 전체 폭 독점) */}
+        {/* 4. 시계열 변위 추이 차트 */}
         <section className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
@@ -533,11 +532,11 @@ function App() {
                 시계열 변위 추이 (지하수위 & 굴착고)
               </h3>
               <p className="text-xs text-gray-600 font-medium mt-0.5">
-                수위 저하는 음수(-) 영역 하강선으로 표시되며, 우측은 굴착 깊이(m)를 나타냅니다.
+                수위 저하는 음수(-) 영역 하강선으로 표시되며, 우측 축은 고정된 굴착 깊이(GL)를 나타냅니다.
               </p>
             </div>
 
-            {/* 신설 [차트 컨트롤 설정 패널] (돋보기 및 기능 제어 탑재, 불필요해진 중복 버튼 제거) */}
+            {/* 차트 컨트롤 설정 패널 */}
             <div className="flex flex-wrap items-center gap-2.5 text-xs bg-gray-100 p-1.5 rounded-xl border border-gray-250 shadow-inner">
               <button
                 onClick={() => setAiFocusMode(!aiFocusMode)}
@@ -580,9 +579,21 @@ function App() {
             </div>
           </div>
 
+          {/* 차트 상단 양 끝 가로형 축 라벨 신설 배치 (수평 고정 렌더링으로 겹침 완전 제거) */}
+          <div className="flex justify-between items-center text-xs font-black text-gray-800 px-3.5 pt-2">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 bg-blue-650 rounded-full inline-block"></span>
+              누적변화량 (m)
+            </span>
+            <span className="flex items-center gap-1.5 text-right">
+              현장 굴착고 (GL-m)
+              <span className="w-2.5 h-2.5 bg-sky-600 rounded-full inline-block"></span>
+            </span>
+          </div>
+
           <div className="w-full h-[420px] bg-slate-50/50 p-2.5 rounded-2xl border border-gray-100">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={filteredData} margin={{ top: 20, right: 15, left: 15, bottom: 5 }}>
+              <ComposedChart data={filteredData} margin={{ top: 25, right: 15, left: 15, bottom: 15 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
                 <XAxis 
                   dataKey="date" 
@@ -590,28 +601,22 @@ function App() {
                   fontSize={11} 
                   fontWeight="bold"
                   tickLine={true} 
-                  minTickGap={50}
+                  minTickGap={60}
                 />
                 
-                {/* 좌측 Y축: 누적변화량(m) - 포맷팅 적용으로 자릿수 겹침 버그 완벽 수정 */}
+                {/* 좌측 Y축: 누적변화량(m) - 도메인 [0 ~ -20m], 간격 -5m 고정 적용 */}
                 <YAxis 
                   yAxisId="left" 
                   stroke="rgba(0,0,0,0.6)" 
                   fontSize={11} 
                   fontWeight="bold"
                   tickLine={true}
-                  domain={['dataMin - 0.2', 0.1]}
+                  domain={[-20, 0]}
+                  ticks={[0, -5, -10, -15, -20]}
                   tickFormatter={(v) => Number(v).toFixed(1) + 'm'}
-                >
-                  <Label 
-                    value="누적변화량" 
-                    angle={-90} 
-                    position="insideLeft" 
-                    style={{ textAnchor: 'middle', fill: 'rgba(0,0,0,0.7)', fontSize: 11, fontWeight: 'black' }} 
-                  />
-                </YAxis>
+                />
 
-                {/* 우측 Y축: 굴착 깊이(m) - 상시 마운트로 범례 수치 멸실 방지 */}
+                {/* 우측 Y축: 굴착 깊이(m) - 도메인 [0 ~ -5m], 간격 -1m 고정 적용 및 상시 표출 */}
                 <YAxis 
                   yAxisId="right" 
                   orientation="right" 
@@ -619,18 +624,12 @@ function App() {
                   fontSize={11} 
                   fontWeight="bold"
                   tickLine={true}
-                  domain={['dataMin - 3', 0.5]}
+                  domain={[-5, 0]}
+                  ticks={[0, -1, -2, -3, -4, -5]}
                   tickFormatter={(v) => Number(v).toFixed(1) + 'm'}
-                >
-                  <Label 
-                    value="굴착 깊이 (G.L)" 
-                    angle={90} 
-                    position="insideRight" 
-                    style={{ textAnchor: 'middle', fill: 'rgba(0,0,0,0.7)', fontSize: 11, fontWeight: 'black' }} 
-                  />
-                </YAxis>
+                />
 
-                {/* 강수량 전용 독립 Y축 생성 (굴착고 축 찌부러짐 차단) */}
+                {/* 강수량 전용 독립 Y축 (굴착고 찌부러짐 차단용 보이지 않는 축) */}
                 <YAxis 
                   yAxisId="rain"
                   orientation="right"
@@ -682,7 +681,7 @@ function App() {
                   }}
                 />
 
-                {/* 1. 기상청 강수 데이터 연동 */}
+                {/* 기상청 강수 연동 */}
                 {weatherImpact && (
                   <Bar 
                     yAxisId="rain"
@@ -694,7 +693,7 @@ function App() {
                   />
                 )}
 
-                {/* 2. 관리기준 수평 임계선 (토글 상태에 맞춰 렌더링, 불필요한 라벨 제거) */}
+                {/* 관리기준 수평 임계선 (개별 토글 적용, 텍스트 라벨 제거) */}
                 {showLevel1 && (
                   <ReferenceLine 
                     yAxisId="left" 
@@ -723,7 +722,7 @@ function App() {
                   />
                 )}
 
-                {/* AI 예측 구간 수직 구분선 */}
+                {/* AI 예측 구간 구분선 */}
                 {safetyStatus.forecastStartDate && (
                   <ReferenceLine 
                     yAxisId="left" 
@@ -731,18 +730,10 @@ function App() {
                     stroke="#4f46e5" 
                     strokeWidth={3} 
                     strokeDasharray="4 3"
-                  >
-                    <Label 
-                      value="▲ AI 미래 예측 시작점 (5일간)" 
-                      position="top" 
-                      fill="#3730a3" 
-                      fontSize={11} 
-                      fontWeight="black" 
-                    />
-                  </ReferenceLine>
+                  />
                 )}
 
-                {/* 3. 굴착고 라인 그래프 (토글 제어 연동) */}
+                {/* 굴착고 그래프 선 */}
                 {showExcavation && (
                   <Line 
                     yAxisId="right" 
@@ -756,7 +747,7 @@ function App() {
                   />
                 )}
 
-                {/* 4. 실제 지하수위 누적변위량 */}
+                {/* 실제 누적변위 */}
                 <Line 
                   yAxisId="left" 
                   type="monotone" 
@@ -769,7 +760,7 @@ function App() {
                   connectNulls
                 />
 
-                {/* 5. ARIMA 예측 */}
+                {/* ARIMA 예측 */}
                 <Line 
                   yAxisId="left" 
                   type="monotone" 
@@ -782,7 +773,7 @@ function App() {
                   connectNulls
                 />
 
-                {/* 6. LSTM 예측 */}
+                {/* LSTM 예측 */}
                 <Line 
                   yAxisId="left" 
                   type="monotone" 
@@ -795,7 +786,7 @@ function App() {
                   connectNulls
                 />
 
-                {/* 7. Transformer 예측 */}
+                {/* Transformer 예측 */}
                 <Line 
                   yAxisId="left" 
                   type="monotone" 
@@ -807,14 +798,14 @@ function App() {
                   connectNulls
                 />
 
-                {/* 커스텀 범례 마운팅 */}
+                {/* 커스텀 범례 장착 */}
                 <Legend content={renderCustomLegend} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
         </section>
 
-        {/* 4-2. 일간변위 (m/day) 차트 (가로 전체 폭 독점) */}
+        {/* 일간변위 모니터링 */}
         <section className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm space-y-4">
           <div>
             <h3 className="text-lg font-black text-gray-900 flex items-center gap-2">
@@ -836,7 +827,7 @@ function App() {
                   fontSize={11} 
                   fontWeight="bold" 
                   tickLine={true}
-                  minTickGap={50}
+                  minTickGap={60}
                 />
                 <YAxis 
                   stroke="rgba(0,0,0,0.6)" 
@@ -846,7 +837,7 @@ function App() {
                   tickFormatter={(v) => Number(v).toFixed(2) + 'm/d'}
                 />
                 
-                {/* 일간변위 기준 임계선 표시 (하단 개별 범례와 완전 연동) */}
+                {/* 일간변위 관리기준선 (토글과 완전 연동) */}
                 {showLevel1 && <ReferenceLine y={0.50} stroke="#d97706" strokeDasharray="3 3" strokeWidth={1.5} />}
                 {showLevel2 && <ReferenceLine y={0.75} stroke="#ea580c" strokeDasharray="3 3" strokeWidth={1.5} />}
                 {showLevel3 && <ReferenceLine y={1.00} stroke="#ef4444" strokeDasharray="3 3" strokeWidth={1.8} />}
@@ -869,7 +860,6 @@ function App() {
                   }}
                 />
 
-                {/* 일간변위 Bar */}
                 <Bar 
                   dataKey={(d) => d.isForecast ? d.arimaRate : d.actualRate} 
                   fill="rgba(37, 99, 235, 0.85)" 
@@ -884,7 +874,7 @@ function App() {
           </div>
         </section>
 
-        {/* 5. 계측 데이터 테이블 섹션 */}
+        {/* 계측 데이터 테이블 */}
         <section className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-3 border-b border-gray-200">
             <div className="flex items-center gap-2.5">
@@ -945,7 +935,7 @@ function App() {
             </table>
           </div>
 
-          {/* 테이블 하단 페이징 컨트롤 */}
+          {/* 페이징 컨트롤 */}
           <div className="flex items-center justify-between pt-4 border-t border-gray-200 text-xs font-bold text-gray-700">
             <p className="text-gray-600">
               전체 {totalPages}페이지 중 {currentPage}페이지 표시
@@ -990,22 +980,22 @@ function App() {
           </div>
         </section>
 
-        {/* 6. AI 시점 예측 모델 고도화 분석 내용 (1열 3단 구성으로 전면 개편) */}
+        {/* AI 상세 분석 대장 (1열 3단 구성) */}
         <section className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 space-y-6">
           <div className="flex items-center gap-2.5 border-b border-gray-200 pb-3">
-            <span className="w-2.5 h-6 bg-indigo-600 rounded-full animate-pulse"></span>
+            <span className="w-2.5 h-6 bg-indigo-600 rounded-full"></span>
             <h2 className="text-xl font-black text-gray-950">지하수위계 AI 예측 알고리즘 상세 설명 대장</h2>
           </div>
           
           <div className="flex flex-col space-y-8 text-slate-800">
             
-            {/* ARIMA 상세 */}
+            {/* ARIMA */}
             <div className="bg-orange-50/40 border border-orange-200 rounded-3xl p-6 md:p-8 space-y-5 shadow-sm">
               <div className="flex items-center gap-3 border-b border-orange-200 pb-3">
                 <div className="p-2 rounded-xl bg-orange-100 border border-orange-250">
                   <Cpu className="w-6 h-6 text-orange-600" />
                 </div>
-                <h3 className="font-black text-gray-950 text-base md:text-lg">1. ARIMA (AutoRegressive Integrated Moving Average - 자기회귀 누적이동평균)</h3>
+                <h3 className="font-black text-gray-950 text-base md:text-lg">1. ARIMA (AutoRegressive Integrated Moving Average)</h3>
               </div>
               
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8 text-xs md:text-sm leading-relaxed font-bold">
@@ -1054,13 +1044,13 @@ function App() {
               </div>
             </div>
 
-            {/* LSTM 상세 */}
+            {/* LSTM */}
             <div className="bg-purple-50/40 border border-purple-200 rounded-3xl p-6 md:p-8 space-y-5 shadow-sm">
               <div className="flex items-center gap-3 border-b border-purple-200 pb-3">
                 <div className="p-2 rounded-xl bg-purple-100 border border-purple-250">
                   <Cpu className="w-6 h-6 text-purple-600" />
                 </div>
-                <h3 className="font-black text-gray-950 text-base md:text-lg">2. LSTM (Long Short-Term Memory - 장단기 메모리 신경망)</h3>
+                <h3 className="font-black text-gray-950 text-base md:text-lg">2. LSTM (Long Short-Term Memory)</h3>
               </div>
               
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8 text-xs md:text-sm leading-relaxed font-bold">
@@ -1109,13 +1099,13 @@ function App() {
               </div>
             </div>
 
-            {/* Transformer 상세 */}
+            {/* Transformer */}
             <div className="bg-pink-50/40 border border-pink-200 rounded-3xl p-6 md:p-8 space-y-5 shadow-sm">
               <div className="flex items-center gap-3 border-b border-pink-200 pb-3">
                 <div className="p-2 rounded-xl bg-pink-100 border border-pink-250">
                   <Cpu className="w-6 h-6 text-pink-650" />
                 </div>
-                <h3 className="font-black text-gray-950 text-base md:text-lg">3. Transformer (Attention-based Sequence Modeling - 어텐션 기반 예측 신경망)</h3>
+                <h3 className="font-black text-gray-950 text-base md:text-lg">3. Transformer</h3>
               </div>
               
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8 text-xs md:text-sm leading-relaxed font-bold">
@@ -1169,7 +1159,7 @@ function App() {
 
       </main>
 
-      {/* 7. 하단 푸터 */}
+      {/* 하단 푸터 */}
       <footer className="border-t border-gray-200 bg-white py-4 px-6 text-center text-xs text-gray-500">
         <p className="font-semibold">© 2026 월곶-판교 복선전철 제4공구 현장 계측 시스템. (AI Groundwater Level Control Console)</p>
       </footer>
