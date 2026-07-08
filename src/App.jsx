@@ -605,7 +605,7 @@ function App() {
                   minTickGap={60}
                 />
                 
-                {/* 좌측 Y축: 누적변화량(m) - 도메인 [0 ~ -20m], 대칭용 4m 간격 눈금 고정 적용 */}
+                {/* 좌측 Y축: 누적변화량(m) - 도메인 [0 ~ -20m], 4m 간격 눈금 고정 적용 */}
                 <YAxis 
                   yAxisId="left" 
                   stroke="rgba(0,0,0,0.6)" 
@@ -617,7 +617,7 @@ function App() {
                   tickFormatter={(v) => Number(v).toFixed(1) + 'm'}
                 />
 
-                {/* 우측 Y축: 굴착 깊이(m) - 도메인 [0 ~ -5m], 1m 간격으로 좌측 축과 눈금 수(6개) 대칭 고정 적용 */}
+                {/* 우측 Y축: 굴착 깊이(m) - 도메인 [0 ~ -4m], 5:1 비율 정합용 0.8m 간격 눈금 고정 적용 */}
                 <YAxis 
                   yAxisId="right" 
                   orientation="right" 
@@ -625,8 +625,8 @@ function App() {
                   fontSize={11} 
                   fontWeight="bold"
                   tickLine={true}
-                  domain={[-5, 0]}
-                  ticks={[0, -1, -2, -3, -4, -5]}
+                  domain={[-4, 0]}
+                  ticks={[0, -0.8, -1.6, -2.4, -3.2, -4.0]}
                   tickFormatter={(v) => Number(v).toFixed(1) + 'm'}
                 />
 
